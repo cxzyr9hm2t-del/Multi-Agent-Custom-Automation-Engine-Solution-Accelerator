@@ -113,6 +113,7 @@ class TestDatabaseFactoryGetDatabase:
         mock_cosmos_client.database = Mock()
         mock_cosmos_client.container = Mock()
         mock_cosmos_client._initialized = True
+        mock_cosmos_client.user_id = "test_user"
         
         mock_config = Mock()
         mock_config.COSMOSDB_ENDPOINT = "https://test.documents.azure.com:443/"
@@ -476,6 +477,9 @@ class TestDatabaseFactoryConfigurationHandling:
         """Test that configuration values are passed correctly to CosmosDBClient."""
         mock_cosmos_client = Mock(spec=CosmosDBClient)
         mock_cosmos_client.initialize = AsyncMock()
+        mock_cosmos_client.client = Mock()
+        mock_cosmos_client.database = Mock()
+        mock_cosmos_client.container = Mock()
         
         mock_credentials = Mock()
         mock_config = Mock()
@@ -488,8 +492,11 @@ class TestDatabaseFactoryConfigurationHandling:
             with patch('backend.common.database.database_factory.config', mock_config):
                 await DatabaseFactory.get_database(user_id="custom_user")
                 
-                # Verify all config values were passed correctly
-                mock_cosmos_class.assert_called_once_with(
+                # get_database builds a shared instance and a per-request
+                # instance, so the client is constructed twice with the same
+                # config-derived arguments.
+                assert mock_cosmos_class.call_count == 2
+                mock_cosmos_class.assert_called_with(
                     endpoint="https://custom.documents.azure.com:443/",
                     credential=mock_credentials,
                     database_name="custom_database",
@@ -498,8 +505,8 @@ class TestDatabaseFactoryConfigurationHandling:
                     user_id="custom_user"
                 )
                 
-                # Verify get_azure_credentials was called
-                mock_config.get_azure_credentials.assert_called_once()
+                # Verify get_azure_credentials was invoked for each construction
+                assert mock_config.get_azure_credentials.call_count == 2
     
     @pytest.mark.asyncio
     async def test_config_credential_error(self):
