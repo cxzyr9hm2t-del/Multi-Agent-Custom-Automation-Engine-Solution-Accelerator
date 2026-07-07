@@ -260,14 +260,22 @@ DO NOT EVER OFFER TO HELP FURTHER IN THE FINAL ANSWER! Just provide the final an
         # Delegate to base for normal progress ledger creation
         ledger = await super().create_progress_ledger(magentic_context)
 
-        # --- Premature satisfaction guard ---
-        # If the LLM says the request is satisfied, verify that all planned
-        # (non-proxy, non-manager) agents have actually responded before allowing
-        # the workflow to terminate.  This addresses the bug where the orchestrator
-        # marks satisfied=True after a single comprehensive agent response.
+        # --- Premature satisfaction guard (bounded to avoid infinite loops) ---
         if ledger.is_request_satisfied.answer:
             uncalled = self._get_uncalled_agents(magentic_context)
-            if uncalled:
+            total_agents = len(self._get_all_planned_agents(magentic_context))
+            # Bound re-routing so an unrecognized agent can't loop until max_rounds
+            guard_round_budget = 2 * max(total_agents, 1) + self.max_stall_count
+            within_budget = magentic_context.round_count < guard_round_budget
+            if uncalled and not within_budget:
+                logger.warning(
+                    "Premature satisfaction guard exhausted its round budget (%d) with "
+                    "agent(s) still marked uncalled: %s. Allowing termination to avoid an "
+                    "infinite loop (likely an author_name/participant-name mismatch).",
+                    guard_round_budget,
+                    uncalled,
+                )
+            if uncalled and within_budget:
                 next_agent = uncalled[0]
                 logger.info(
                     "Progress ledger marked satisfied but %d agent(s) have not responded yet: %s. "
@@ -284,9 +292,6 @@ DO NOT EVER OFFER TO HELP FURTHER IN THE FINAL ANSWER! Just provide the final an
                 ledger.is_progress_being_made.reason = "Continuing to consult remaining agents"
                 ledger.next_speaker.answer = next_agent
                 ledger.next_speaker.reason = f"{next_agent} has not yet been consulted"
-                # Always override instruction with task-relevant prompt so that
-                # data agents (Azure AI Search, RAG) execute meaningful queries
-                # instead of receiving a stale finalization instruction.
                 task_text = getattr(magentic_context.task, "text", str(magentic_context.task))
                 ledger.instruction_or_question.answer = (
                     f"Using your available tools and data sources, provide your response for the following task: {task_text}"
@@ -298,25 +303,40 @@ DO NOT EVER OFFER TO HELP FURTHER IN THE FINAL ANSWER! Just provide the final an
         return ledger
 
     @staticmethod
-    def _get_uncalled_agents(magentic_context: MagenticContext) -> list[str]:
-        """Return agent names from participant_descriptions that have not yet
-        authored a message in the chat_history (excluding ProxyAgent and the
-        MagenticManager)."""
-        skip_names = {"ProxyAgent", "MagenticManager", "magentic_manager"}
+    def _normalize_agent_name(name: str) -> str:
+        """Canonicalize an agent name (lowercase, alphanumeric-only) so service-side
+        name sanitization doesn't break responded-detection."""
+        return "".join(ch for ch in (name or "").lower() if ch.isalnum())
 
-        all_agents = [
-            name for name in magentic_context.participant_descriptions
-            if name not in skip_names
+    @classmethod
+    def _get_all_planned_agents(cls, magentic_context: MagenticContext) -> list[str]:
+        """Return planned agent names, excluding ProxyAgent and the MagenticManager."""
+        skip_names = {
+            cls._normalize_agent_name(n)
+            for n in ("ProxyAgent", "MagenticManager", "magentic_manager")
+        }
+        return [
+            name
+            for name in magentic_context.participant_descriptions
+            if cls._normalize_agent_name(name) not in skip_names
         ]
 
-        # Collect author names that appear in chat_history
+    @classmethod
+    def _get_uncalled_agents(cls, magentic_context: MagenticContext) -> list[str]:
+        """Return planned agents that have not yet authored a message (normalized match)."""
+        all_agents = cls._get_all_planned_agents(magentic_context)
+
         responded = set()
         for msg in magentic_context.chat_history:
             author = getattr(msg, "author_name", None)
             if author:
-                responded.add(author)
+                responded.add(cls._normalize_agent_name(author))
 
-        return [name for name in all_agents if name not in responded]
+        return [
+            name
+            for name in all_agents
+            if cls._normalize_agent_name(name) not in responded
+        ]
 
     async def _wait_for_user_approval(
         self, m_plan_id: Optional[str] = None

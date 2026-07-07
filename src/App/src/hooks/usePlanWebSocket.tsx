@@ -5,7 +5,7 @@
  * Dispatches Redux actions for each event type so PlanPage no longer
  * needs 7+ useEffect blocks for WebSocket handling.
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import webSocketService from '@/store/WebSocketService';
 import { PlanDataService } from '@/store/PlanDataService';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -100,6 +100,11 @@ export function usePlanWebSocket({
     const continueWithWebsocketFlow = useAppSelector(selectContinueWithWebsocketFlow);
     const streamingMessageBuffer = useAppSelector(selectStreamingMessageBuffer);
 
+    // Coalesce high-frequency streaming tokens into one flush per animation frame
+    // to avoid a synchronous re-render per token freezing the UI on fast streams.
+    const streamingChunkQueueRef = useRef<string[]>([]);
+    const streamingFlushHandleRef = useRef<number | null>(null);
+
     // ── PLAN_APPROVAL_REQUEST ─────────────────────────────────────
     useEffect(() => {
         const unsub = webSocketService.on(
@@ -129,15 +134,38 @@ export function usePlanWebSocket({
 
     // ── AGENT_MESSAGE_STREAMING ───────────────────────────────────
     useEffect(() => {
+        const flushStreamingChunks = () => {
+            streamingFlushHandleRef.current = null;
+            const chunks = streamingChunkQueueRef.current;
+            if (chunks.length === 0) return;
+            streamingChunkQueueRef.current = [];
+            dispatch(setShowBufferingText(true));
+            dispatch(appendToStreamingBuffer(chunks.join('')));
+        };
+
         const unsub = webSocketService.on(
             WebsocketMessageType.AGENT_MESSAGE_STREAMING,
             (msg: any) => {
                 const line = PlanDataService.simplifyHumanClarification(msg.data.content);
-                dispatch(setShowBufferingText(true));
-                dispatch(appendToStreamingBuffer(line));
+                streamingChunkQueueRef.current.push(line);
+                if (streamingFlushHandleRef.current === null) {
+                    streamingFlushHandleRef.current = requestAnimationFrame(flushStreamingChunks);
+                }
             },
         );
-        return unsub;
+        return () => {
+            unsub();
+            // Cancel pending frame and flush leftovers so no streamed text is lost
+            if (streamingFlushHandleRef.current !== null) {
+                cancelAnimationFrame(streamingFlushHandleRef.current);
+                streamingFlushHandleRef.current = null;
+            }
+            if (streamingChunkQueueRef.current.length > 0) {
+                const remaining = streamingChunkQueueRef.current.join('');
+                streamingChunkQueueRef.current = [];
+                dispatch(appendToStreamingBuffer(remaining));
+            }
+        };
     }, [dispatch]);
 
     // ── USER_CLARIFICATION_REQUEST ────────────────────────────────
@@ -217,6 +245,24 @@ export function usePlanWebSocket({
                     dispatch(setSubmittingChatDisableInput(true));
                     scrollToBottom();
                     showToast(errorContent, 'error');
+                    webSocketService.disconnect();
+                } else {
+                    // Any other terminal status (e.g. "terminated"): clear the spinner so the UI doesn't hang after the answer arrived
+                    const content = finalMessage.data?.content;
+                    if (content) {
+                        dispatch(addAgentMessage({
+                            agent: AgentType.GROUP_CHAT_MANAGER,
+                            agent_type: AgentMessageType.AI_AGENT,
+                            timestamp: Date.now(),
+                            steps: [],
+                            next_steps: [],
+                            content,
+                            raw_data: finalMessage,
+                        }));
+                    }
+                    dispatch(setShowBufferingText(false));
+                    dispatch(setShowProcessingPlanSpinner(false));
+                    scrollToBottom();
                     webSocketService.disconnect();
                 }
             },

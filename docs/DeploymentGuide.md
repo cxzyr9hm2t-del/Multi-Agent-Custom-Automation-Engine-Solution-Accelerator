@@ -68,9 +68,10 @@ Ensure you have access to an [Azure subscription](https://azure.microsoft.com/fr
 📖 **Follow:** [Quota Check Instructions](./quota_check.md) to ensure sufficient capacity.
 
 **Default Quota Configuration:**
-- **GPT-4.1:** 150k tokens
-- **o4-mini:** 50k tokens
-- **GPT-4.1-mini:** 50k tokens
+- **gpt-5.4 (150k tokens)** — backs the larger GPT model deployment (alias `gpt-5.4`).
+- **gpt-5.4-mini (100k tokens)** — backs the smaller GPT model deployment (alias `gpt-5.4-mini`), also used for reasoning workloads.
+
+> **Note:** The underlying models are `gpt-5.4` (2026-03-05 series) and `gpt-5.4-mini` (2026-03-17 series). Both are reasoning-capable GPT-5.4 GA models.
 
 > **Note:** When you run `azd up`, the deployment will automatically show you regions with available quota, so this pre-check is optional but helpful for planning purposes. You can customize these settings later in [Step 3.3: Advanced Configuration](#33-advanced-configuration-optional).
 
@@ -321,7 +322,8 @@ azd up
 
 **Expected Duration:** 9-10 minutes for default configuration
 
-- **Upon successful completion**, you will see a success message indicating that all resources have been deployed, along with the application URL and next steps for uploading team configurations and sample data.
+
+- **Upon successful completion**, you will see a success message indicating that all resources have been deployed, along with the application URL. The next steps are to build and push the backend, frontend, and mcp_server container images to ACR, point the container app and web app at them, and upload the team configurations and sample data.
 
 ![Deployment Success message](./images/Deployment_success_message.png)
 
@@ -339,9 +341,29 @@ After successful deployment:
 
 ## Step 5: Post-Deployment Configuration
 
-### 5.1 Run Post Deployment Script
+When `azd up` finishes, the `postdeploy` hook (defined in `azure.yaml`) prints the exact commands to run next. Complete the following steps, in order, from the project root before accessing the application.
 
-1. You can upload Team Configurations using command printed in the terminal. The command will look like one of the following. Run the appropriate command for your shell from the project root:
+### 5.1 Build and Push Container Images
+
+> **⚠️ Required step:** `azd up` provisions the infrastructure but deploys a temporary `hello-world` placeholder image to the backend and mcp_server Container Apps. Until you complete this step, those services are non-functional and the application will not work. The `postdeploy` hook only prints these commands — you must run them yourself.
+
+Build and push the backend, frontend, and mcp_server container images to ACR, then point the Container App and Web App at them. Run the command for your shell:
+
+  - **For Bash (Linux/macOS/WSL):**
+    ```bash
+    bash infra/scripts/build_and_push_images.sh
+    ```
+
+  - **For PowerShell (Windows):**
+    ```powershell
+    infra\scripts\Build-And-Push-Images.ps1
+    ```
+
+The script reads the ACR name, resource group and target Container App / Web App names from the current `azd` environment, so it must be run from the project root after a successful `azd up`. See [Step 4.2](#step-4-deploy-application) for build options (`remote` vs `local` mode and custom image tags).
+
+### 5.2 Upload Team Configurations and Index Sample Data
+
+1. Upload Team Configurations and index the sample data using the command printed in the terminal. Run the appropriate command for your shell from the project root:
 
   - **For Bash (Linux/macOS/WSL):**
     ```bash
@@ -358,25 +380,29 @@ After successful deployment:
 
 ![Usecase selection](./images/Usecase_selection.png)
 
+### 5.3 Access the Application
 
-### 5.2 Configure Authentication (Optional)
+Once both scripts complete, access your deployed frontend application at the URL printed by the `postdeploy` hook (`https://<webSiteDefaultHostname>`), or retrieve it from the Azure Portal as described in [Step 4.3](#43-get-application-url).
+
+
+### 5.4 Configure Authentication (Optional)
 
 1. Follow [App Authentication Configuration](./azure_app_service_auth_setup.md)
 2. Wait up to 10 minutes for authentication changes to take effect
 
-### 5.3 Verify Deployment
+### 5.5 Verify Deployment
 
 1. Access your application using the URL from Step 4.3
 2. Confirm the application loads successfully
 <!-- 3. Verify you can sign in with your authenticated account -->
 
-### 5.4 Test the Application
+### 5.6 Test the Application
 
 **Quick Test Steps:**
 
 1. **Access the application** using the URL from Step 4.3
 2. **Sign in** with your authenticated account
-3. **Select a use case** from the available scenarios you uploaded in Step 5.1
+3. **Select a use case** from the available scenarios you uploaded in Step 5.2
 4. **Ask a sample question** relevant to the selected use case
 5. **Verify the response** includes appropriate multi-agent collaboration
 6. **Check the logs** in Azure Portal to confirm backend processing
