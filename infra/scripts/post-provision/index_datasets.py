@@ -8,13 +8,13 @@ import sys
 
 # PDF text extraction function
 def extract_pdf_text(pdf_bytes):
-    """Extract text content from PDF bytes using PyPDF2"""
+    """Extract text content from PDF bytes using pypdf"""
     try:
-        import PyPDF2
+        import pypdf
         import io
 
         pdf_file = io.BytesIO(pdf_bytes)
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        pdf_reader = pypdf.PdfReader(pdf_file)
 
         # Check if PDF is encrypted/protected
         if pdf_reader.is_encrypted:
@@ -45,7 +45,7 @@ def extract_pdf_text(pdf_bytes):
         return full_text if full_text else "PDF_NO_TEXT: No readable text content found in PDF."
 
     except ImportError:
-        return "PDF_ERROR: PyPDF2 library not available. Install with: pip install PyPDF2"
+        return "PDF_ERROR: pypdf library not available. Install with: pip install pypdf"
     except Exception as e:
         return f"PDF_ERROR: Error reading PDF content: {str(e)}"
     
