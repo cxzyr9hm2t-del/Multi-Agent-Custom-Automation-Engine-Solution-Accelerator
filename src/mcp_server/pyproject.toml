@@ -16,18 +16,22 @@ dynamic = ["version"]
 # Core runtime dependencies managed in this pyproject.toml
 dependencies = [
   "fastmcp==3.2.0",
-  "fastapi==0.115.0",
+  # Security: 0.115.0 constrained starlette to <0.39.0, which held this surface
+  # on starlette 0.38.6 with seven unpatched advisories (oldest: CVE-2024-47874).
+  "fastapi==0.140.0",
   "uvicorn[standard]==0.38.0",
   "python-dotenv==1.2.2",
-  "azure-identity==1.19.0",
+  # Aligned with src/backend — 1.19.0 was six minor versions behind on an auth library.
+  "azure-identity==1.25.3",
   "pydantic==2.11.7",
   "pydantic-settings==2.6.1",
-  "python-multipart==0.0.27",
+  "python-multipart==0.0.32",
   "httpx==0.28.1",
-  "werkzeug==3.1.6",
+  "werkzeug==3.1.8",
   "urllib3==2.7.0",
-  "azure-core==1.38.0",
-  "cryptography==46.0.7",
+  "azure-core==1.40.0",
+  # Security: GHSA-537c-gmf6-5ccf (vulnerable bundled OpenSSL in manylinux wheels).
+  "cryptography==48.0.1",
   "authlib==1.6.12",
   "azure-storage-blob==12.25.1",
 
