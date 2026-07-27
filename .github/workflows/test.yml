@@ -75,10 +75,10 @@ jobs:
           PYTHONPATH: src:src/backend
         run: |
           # Run test_app.py first (isolation required)
-          python -m pytest src/tests/backend/test_app.py --cov=src/backend --cov-config=.coveragerc -q
+          python -m pytest src/tests/backend/test_app.py --cov=src/backend -q
 
           # Run remaining backend tests with coverage append
-          python -m pytest src/tests/backend --cov=src/backend --cov-append --cov-report=term --cov-report=xml --junitxml=pytest.xml --cov-config=.coveragerc --ignore=src/tests/backend/test_app.py
+          python -m pytest src/tests/backend --cov=src/backend --cov-append --cov-report=term --cov-report=xml --junitxml=pytest.xml --ignore=src/tests/backend/test_app.py
 
       - name: Check coverage threshold
         if: env.skip_tests == 'false'

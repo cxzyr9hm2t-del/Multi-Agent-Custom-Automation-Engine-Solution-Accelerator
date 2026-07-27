@@ -51,12 +51,12 @@ PYTHONPATH=src:src/mcp_server python -m pytest src/tests/mcp_server
 
 `test_app.py` is run first and separately — it needs process isolation. CI enforces an **80% coverage floor**; the suite currently sits at ~86%.
 
-Known rough edges in the test setup, worth knowing before you debug them:
+Two things about how the suite is invoked, worth knowing before you debug them:
 
-- The root `conftest.py` is vestigial. It inserts `<repo>/../../backend/v4/magentic_agents` onto `sys.path` — a path that resolves *above* the repository and refers to a `v4/` layout that no longer exists. It does nothing; don't rely on it and don't be misled by it.
-- `.github/workflows/test.yml` passes `--cov-config=.coveragerc`, but `.coveragerc` no longer exists — coverage settings were consolidated into `[tool.coverage.*]` in the root `pyproject.toml`. Coverage still runs, but the `omit` list may not apply as written.
-- `src/mcp_server/pytest.ini` uses a `[tool:pytest]` header, which is the `setup.cfg` spelling. In a `pytest.ini` the header must be `[pytest]`, so this file's settings are likely inert.
-- Despite what older docs claim, `asyncio_mode` is **not** configured anywhere in this repo. The root `pyproject.toml` only sets `addopts = "-p pytest_asyncio"`.
+- **`test_app.py` must run in its own process.** Running the whole tree in one pytest invocation aborts collection with `No module named 'orchestration.orchestration_manager'` — `test_app.py` disturbs import state for the rest of the tree. This is why CI runs it first and separately, and why the two commands above are two commands. Split that way, the full suite passes (29 + 834).
+- `asyncio_mode` is **not** configured anywhere in this repo, despite what older docs claim. The root `pyproject.toml` only sets `addopts = "-p pytest_asyncio"`.
+
+Three config defects were found while writing this file and fixed in the same change, so you will not hit them — noted here only because older checkouts still have them: the root `conftest.py` was dead code pointing above the repository at a `v4/` layout that no longer exists (deleted); `.github/workflows/test.yml` passed `--cov-config=.coveragerc` for a file that no longer exists (flag removed — coverage is unchanged at 86%, since `[tool.coverage.*]` in the root `pyproject.toml` now applies); and `src/mcp_server/pytest.ini` used the `setup.cfg` header `[tool:pytest]`, which meant its settings were silently inert (corrected to `[pytest]`).
 
 Frontend: `npm test` (vitest) in `src/App`. Note there are currently **no frontend test files** — vitest exits non-zero with "No test files found".
 
@@ -66,7 +66,7 @@ Frontend: `npm test` (vitest) in `src/App`. Note there are currently **no fronte
 flake8 --config=.flake8 src/backend      # what CI checks
 ```
 
-`.flake8`: `max-line-length = 88`, `extend-ignore = E501`, `ignore = E203, W503, G004, G200, E402`. Its `exclude` list still names `src/backend/tests`, a directory that no longer exists.
+`.flake8`: `max-line-length = 88`, `extend-ignore = E501`, `ignore = E203, W503, G004, G200, E402`. Its `exclude` list still names `frontend`, `src/frontend` and `src/backend/tests` — all directories that no longer exist. Harmless, so left alone.
 
 Frontend: `npm run lint` / `npm run lint:fix` (eslint) in `src/App`.
 
