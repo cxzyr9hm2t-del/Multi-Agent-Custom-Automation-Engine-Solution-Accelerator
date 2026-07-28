@@ -1,0 +1,61 @@
+name: Frontend Lint
+
+# Nothing ran eslint until now, which is how `npm run lint` came to sit broken
+# from 2026-03-31 to 2026-07-28 — it crashed before linting a file and no signal
+# ever surfaced. This job is the guard that makes that failure mode visible.
+#
+# It gates on errors only. eslint exits non-zero on errors and zero on warnings,
+# and the codebase currently carries ~147 warnings (mostly no-explicit-any) that
+# are deliberately not addressed here. If you want warnings to gate too, add
+# --max-warnings=0 once that backlog is cleared.
+
+on:
+  push:
+    branches:
+      - main
+      - demo-v4
+      - dev
+    paths:
+      - 'src/App/**'
+      - '.github/workflows/frontend-lint.yml'
+  pull_request:
+    types:
+      - opened
+      - ready_for_review
+      - reopened
+      - synchronize
+    branches:
+      - main
+      - demo-v4
+      - dev
+    paths:
+      - 'src/App/**'
+      - '.github/workflows/frontend-lint.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/App
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          # Matches the node:20-alpine base used by src/App/Dockerfile.
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src/App/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run eslint
+        run: npm run lint
