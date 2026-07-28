@@ -206,7 +206,7 @@ export class TeamService {
      */
     static async selectTeam(teamId: string): Promise<{
         success: boolean;
-        data?: any;
+        data?: unknown;
         error?: string;
     }> {
         try {
@@ -238,9 +238,13 @@ export class TeamService {
     /**
      * Validate a team configuration JSON structure
      */
-    static validateTeamConfig(config: any): { isValid: boolean; errors: string[]; warnings: string[] } {
+    static validateTeamConfig(configInput: unknown): { isValid: boolean; errors: string[]; warnings: string[] } {
         const errors: string[] = [];
         const warnings: string[] = [];
+
+        // Validated field by field below; the cast only makes the property reads
+        // expressible and is erased at compile time.
+        const config = configInput as Record<string, unknown>;
 
         // Required fields validation
         const requiredFields = ['id', 'team_id', 'name', 'description', 'status', 'created', 'created_by', 'agents'];
@@ -251,13 +255,13 @@ export class TeamService {
         }
 
         // Status validation
-        if (config.status && !['visible', 'hidden'].includes(config.status)) {
+        if (config.status && !['visible', 'hidden'].includes(config.status as string)) {
             errors.push('Status must be either "visible" or "hidden"');
         }
 
         // Agents validation
         if (config.agents && Array.isArray(config.agents)) {
-            config.agents.forEach((agent: any, index: number) => {
+            (config.agents as Record<string, unknown>[]).forEach((agent, index: number) => {
                 const agentRequiredFields = ['input_key', 'type', 'name'];
                 for (const field of agentRequiredFields) {
                     if (!agent[field]) {
@@ -291,7 +295,7 @@ export class TeamService {
 
         // Starting tasks validation
         if (config.starting_tasks && Array.isArray(config.starting_tasks)) {
-            config.starting_tasks.forEach((task: any, index: number) => {
+            (config.starting_tasks as Record<string, unknown>[]).forEach((task, index: number) => {
                 const taskRequiredFields = ['id', 'name', 'prompt'];
                 for (const field of taskRequiredFields) {
                     if (!task[field]) {
