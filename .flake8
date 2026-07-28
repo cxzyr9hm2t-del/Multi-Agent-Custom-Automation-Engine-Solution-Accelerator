@@ -3,9 +3,6 @@ max-line-length = 88
 extend-ignore = E501
 exclude = 
     .venv,
-    frontend,
-    src/frontend,
-    src/backend/tests,
     *.tsx,
     *.ts,
     *.jsx,
