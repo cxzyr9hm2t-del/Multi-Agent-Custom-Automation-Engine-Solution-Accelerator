@@ -99,7 +99,12 @@ export interface StreamMessage {
     type: WebsocketMessageType
     plan_id?: string;
     session_id?: string;
-    data?: any;
+    /**
+     * Payload, discriminated by `type`. Deliberately `unknown` rather than `any` —
+     * consumers know the concrete shape from the discriminant and narrow at the point
+     * of use, which keeps the narrowing visible instead of implicit.
+     */
+    data?: unknown;
     timestamp?: string | number;
 }
 
@@ -150,4 +155,13 @@ export interface ParsedUserClarification {
     type: WebsocketMessageType.USER_CLARIFICATION_REQUEST;
     question: string;
     request_id: string;
+}
+/** Payload of the `connection_status` websocket event. */
+export interface ConnectionStatusPayload {
+    connected?: boolean;
+}
+
+/** Payload of the `error` websocket event. */
+export interface WebSocketErrorPayload {
+    error?: string;
 }

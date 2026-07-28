@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { webSocketService } from '@/store';
-import { StreamMessage } from '../models';
+import { StreamMessage, ConnectionStatusPayload, WebSocketErrorPayload } from '../models';
 
 export interface WebSocketState {
   isConnected: boolean;
@@ -98,8 +98,9 @@ export const useWebSocket = () => {
   useEffect(() => {
     // Set up connection status listener
     const unsubscribeStatus = webSocketService.on('connection_status', (message: StreamMessage) => {
-      if (message.data?.connected !== undefined) {
-        const connected = message.data.connected;
+      const status = message.data as ConnectionStatusPayload | undefined;
+      if (status?.connected !== undefined) {
+        const connected = status.connected;
         isConnectedRef.current = connected;
         setState(prev => ({
           ...prev,
@@ -117,7 +118,7 @@ export const useWebSocket = () => {
       setState(prev => ({
         ...prev,
         isConnected: false,
-        error: message.data?.error || 'WebSocket error occurred'
+        error: (message.data as WebSocketErrorPayload | undefined)?.error || 'WebSocket error occurred'
       }));
     });
 

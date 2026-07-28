@@ -46,6 +46,8 @@ import {
     ParsedUserClarification,
     StreamMessage,
     ProcessedPlanData,
+    StreamingPlanUpdate,
+    ConnectionStatusPayload,
 } from '@/models';
 import { APIService } from '@/api/apiService';
 import { ToastIntent } from '@/components/toast/InlineToaster';
@@ -398,13 +400,14 @@ export function usePlanWebSocket({
         };
 
         const handleStreamingMessage = (message: StreamMessage) => {
-            if (message.data?.plan_id) {
-                dispatch(addStreamingMessage(message.data));
+            const data = message.data as StreamingPlanUpdate | undefined;
+            if (data?.plan_id) {
+                dispatch(addStreamingMessage(data));
             }
         };
 
         const unsubConnection = webSocketService.on('connection_status', (msg) =>
-            handleConnectionChange(msg.data?.connected || false),
+            handleConnectionChange((msg.data as ConnectionStatusPayload | undefined)?.connected || false),
         );
         const unsubStreaming = webSocketService.on(
             WebsocketMessageType.AGENT_MESSAGE,

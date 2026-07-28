@@ -23,8 +23,8 @@ export interface AgentMessageData {
     agent: string;
     agent_type: AgentMessageType;
     timestamp: number;
-    steps: any[];
-    next_steps: any[];
+    steps: unknown[];
+    next_steps: unknown[];
     content: string;
     raw_data: string;
 }
@@ -56,7 +56,7 @@ export interface FinalMessage {
     content: string;
     status: string;
     timestamp: number | null;
-    raw_data: any;
+    raw_data: unknown;
 }
 
 export interface StreamingMessage {
@@ -64,5 +64,5 @@ export interface StreamingMessage {
     agent: string;
     content: string;
     is_final: boolean;
-    raw_data: any;
+    raw_data: unknown;
 }

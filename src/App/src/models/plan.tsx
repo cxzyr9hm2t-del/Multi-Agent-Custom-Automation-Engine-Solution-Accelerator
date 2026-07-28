@@ -138,7 +138,7 @@ export interface UserRequestItem {
     /** AI model identifier */
     ai_model_id?: string | null;
     /** Metadata */
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
     /** Content type */
     content_type?: string;
     /** Text content */
@@ -154,7 +154,7 @@ export interface UserRequestObject {
     /** AI model identifier */
     ai_model_id?: string | null;
     /** Metadata */
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
     /** Content type */
     content_type?: string;
     /** Role */
@@ -210,9 +210,9 @@ export interface AgentMessageBE extends BaseModel {
     /** Raw data associated with the message */
     raw_data: string;
     /** Steps associated with the message */
-    steps: any[];
+    steps: unknown[];
     /** Next steps associated with the message */
-    next_steps: any[];
+    next_steps: unknown[];
 }
 
 export interface PlanFromAPI {
@@ -238,7 +238,7 @@ export interface PlanChatProps {
     planData: ProcessedPlanData;
     input: string;
     loading: boolean;
-    setInput: any;
+    setInput: (value: string) => void;
     submittingChatDisableInput: boolean;
     OnChatSubmit: (message: string) => void;
     streamingMessages?: StreamingPlanUpdate[];
@@ -267,7 +267,7 @@ export interface MPlanData {
     team_id?: string;
     plan_id?: string;
     overall_status?: string;
-    raw_data?: any;
+    raw_data?: unknown;
 }
 
 export interface PlanApprovalRequest {

@@ -153,13 +153,17 @@ export class AgentTypeUtils {
     /**
      * Validate agent configuration
      */
-    static validateAgent(agent: any): { isValid: boolean; errors: string[] } {
+    static validateAgent(agentInput: unknown): { isValid: boolean; errors: string[] } {
         const errors: string[] = [];
 
-        if (!agent || typeof agent !== 'object') {
+        if (!agentInput || typeof agentInput !== 'object') {
             errors.push('Agent must be a valid object');
             return { isValid: false, errors };
         }
+
+        // Validated field by field below; the cast only makes the property reads
+        // expressible and is erased at compile time.
+        const agent = agentInput as Record<string, unknown>;
 
         // Required fields
         if (!agent.input_key || typeof agent.input_key !== 'string' || agent.input_key.trim() === '') {
@@ -183,7 +187,10 @@ export class AgentTypeUtils {
         });
 
         // Special validation for RAG agents
-        if (agent.type === 'RAG' && (!agent.index_name || agent.index_name.trim() === '')) {
+        // NOTE: the cast preserves existing behaviour exactly, including the fact that a
+        // truthy non-string index_name reaches .trim() and throws. Narrowing with a
+        // typeof guard here would silently change that, so it is left alone.
+        if (agent.type === 'RAG' && (!agent.index_name || (agent.index_name as string).trim() === '')) {
             errors.push('RAG agents must have a valid index_name specified');
         }
 
