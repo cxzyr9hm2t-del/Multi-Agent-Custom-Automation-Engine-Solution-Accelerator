@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { PlanStatus } from '../models';
 import { APIService } from '../api/apiService';
 
@@ -24,7 +24,9 @@ export const usePlanCancellationAlert = ({
   planApprovalRequest,
   onNavigate
 }: UsePlanCancellationAlertProps) => {
-  const apiService = new APIService();
+  // Memoised: constructing this inline made it a new object every render, which
+  // changed the useCallback dependency below on every render and defeated the memo.
+  const apiService = useMemo(() => new APIService(), []);
 
   /**
    * Check if a plan is currently active/running

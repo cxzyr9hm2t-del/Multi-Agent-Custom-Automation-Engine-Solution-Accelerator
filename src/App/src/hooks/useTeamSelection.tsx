@@ -22,7 +22,6 @@ interface UseTeamSelectionReturn {
  * React hook for managing team selection with backend integration
  */
 export const useTeamSelection = ({
-  sessionId,
   onTeamSelected,
   onError,
 }: UseTeamSelectionProps = {}): UseTeamSelectionReturn => {
@@ -67,7 +66,7 @@ export const useTeamSelection = ({
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, sessionId, onTeamSelected, onError]);
+  }, [isLoading, onTeamSelected, onError]);
 
   const clearSelection = useCallback(() => {
     setSelectedTeam(null);

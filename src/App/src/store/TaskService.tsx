@@ -1,4 +1,4 @@
-import { Plan, PlanStatus, ApiError } from "../models";
+import { Plan, PlanStatus } from "../models";
 import { Task } from "../models/taskList";
 import { apiService } from "../api/apiService";
 import { InputTask, InputTaskResponse } from "../models/inputTask";

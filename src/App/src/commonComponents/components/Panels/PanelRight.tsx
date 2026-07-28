@@ -48,11 +48,15 @@ const PanelRight: React.FC<PanelRightProps> = ({
   }, [panelType, panelWidth]);
 
   useEffect(() => {
-    // On initial mount, tell the header what panels are open
+    // On initial mount, tell the header what panels are open.
+    // Intentionally mount-only: this announces the *initial* state once. Adding
+    // panelType/isActive would re-announce on every change, which the header
+    // already learns about through the setActivePanel event above.
     eventBus.emit("panelInitState", {
       panelType,
       isActive,
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
