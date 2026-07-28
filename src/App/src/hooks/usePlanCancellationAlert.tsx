@@ -2,9 +2,17 @@ import { useCallback } from 'react';
 import { PlanStatus } from '../models';
 import { APIService } from '../api/apiService';
 
+/** The slice of plan data this hook reads when deciding whether to warn. */
+interface CancellablePlanData {
+  plan?: {
+    id?: string;
+    overall_status?: PlanStatus;
+  };
+}
+
 interface UsePlanCancellationAlertProps {
-  planData: any;
-  planApprovalRequest: any;
+  planData: CancellablePlanData | null;
+  planApprovalRequest: { id?: string } | null;
   onNavigate: () => void;
 }
 
@@ -50,7 +58,9 @@ export const usePlanCancellationAlert = ({
       if (planApprovalRequest?.id) {
         await apiService.approvePlan({
           m_plan_id: planApprovalRequest.id,
-          plan_id: planData?.plan?.id,
+          // Cast preserves today's behaviour: this was `any`, so plan_id could already
+          // be undefined here at runtime. Narrowing it would change what gets sent.
+          plan_id: planData?.plan?.id as string,
           approved: false,
           feedback: 'Plan cancelled by user navigation'
         });

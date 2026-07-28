@@ -6,7 +6,7 @@ import rehypePrism from "rehype-prism";
 import { Body1, Tag, makeStyles, tokens, Button } from "@fluentui/react-components";
 import { TaskService } from "@/store";
 import { PersonRegular, ArrowDownloadRegular } from "@fluentui/react-icons";
-import { getAgentIcon, getAgentDisplayName } from '@/utils/agentIconUtils';
+import { getAgentIcon, getAgentDisplayName, TeamCarrier, ApprovalContextCarrier } from '@/utils/agentIconUtils';
 import { formatJsonInText } from '@/utils/jsonFormatter';
 import { resolveApiAssetUrl } from "@/api/config";
 
@@ -139,8 +139,8 @@ const isClarificationMessage = (content: string): boolean => {
 // and the caller's control flow no longer matters.
 interface AgentMessagesProps {
   agentMessages: AgentMessageData[];
-  planData?: any;
-  planApprovalRequest?: any;
+  planData?: TeamCarrier | null;
+  planApprovalRequest?: ApprovalContextCarrier | null;
   finalResultRef?: React.RefObject<HTMLDivElement>;
 }
 

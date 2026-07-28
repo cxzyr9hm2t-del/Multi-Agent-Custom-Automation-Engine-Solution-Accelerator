@@ -156,10 +156,12 @@ class WebSocketService {
     }
 
     on(eventType: string, callback: (message: StreamMessage) => void): () => void {
-        if (!this.listeners.has(eventType)) {
-            this.listeners.set(eventType, new Set());
+        let setRef = this.listeners.get(eventType);
+        if (!setRef) {
+            setRef = new Set();
+            this.listeners.set(eventType, setRef);
         }
-        this.listeners.get(eventType)!.add(callback);
+        setRef.add(callback);
         return () => {
             const setRef = this.listeners.get(eventType);
             if (setRef) {
@@ -339,7 +341,7 @@ class WebSocketService {
         return this.ws?.readyState === WebSocket.OPEN;
     }
 
-    send(message: any): void {
+    send(message: unknown): void {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify(message));
         } else {

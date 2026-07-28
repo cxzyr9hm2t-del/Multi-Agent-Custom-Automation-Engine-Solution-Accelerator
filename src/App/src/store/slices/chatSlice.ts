@@ -35,13 +35,13 @@ const chatSlice = createSlice({
             state.submittingChatDisableInput = action.payload;
         },
         setClarificationMessage(state, action: PayloadAction<ParsedUserClarification | null>) {
-            state.clarificationMessage = action.payload as any;
+            state.clarificationMessage = action.payload;
         },
         setAgentMessages(state, action: PayloadAction<AgentMessageData[]>) {
-            state.agentMessages = action.payload as any;
+            state.agentMessages = action.payload;
         },
         addAgentMessage(state, action: PayloadAction<AgentMessageData>) {
-            state.agentMessages.push(action.payload as any);
+            state.agentMessages.push(action.payload);
         },
         /** Reset chat state (used when navigating to a new plan) */
         resetChat() {

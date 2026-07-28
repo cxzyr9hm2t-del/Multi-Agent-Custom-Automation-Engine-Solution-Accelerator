@@ -43,7 +43,7 @@ interface CacheEntry<T> {
 }
 
 class APICache {
-    private cache: Map<string, CacheEntry<any>> = new Map();
+    private cache: Map<string, CacheEntry<unknown>> = new Map();
 
     set<T>(key: string, data: T, ttl = 60000): void { // Default TTL: 1 minute
         this.cache.set(key, {
@@ -63,7 +63,7 @@ class APICache {
             return null;
         }
 
-        return entry.data;
+        return entry.data as T;
     }
 
     clear(): void {
@@ -81,12 +81,14 @@ class APICache {
 
 // Request tracking to prevent duplicate requests
 class RequestTracker {
-    private pendingRequests: Map<string, Promise<any>> = new Map();
+    private pendingRequests: Map<string, Promise<unknown>> = new Map();
 
     async trackRequest<T>(key: string, requestFn: () => Promise<T>): Promise<T> {
-        // If request is already pending, return the existing promise
-        if (this.pendingRequests.has(key)) {
-            return this.pendingRequests.get(key)!;
+        // If request is already pending, return the existing promise. A single get()
+        // replaces has() + a non-null assertion; only real promises are ever stored.
+        const pending = this.pendingRequests.get(key);
+        if (pending) {
+            return pending as Promise<T>;
         }
 
         // Create new request
@@ -122,7 +124,7 @@ export class APIService {
     // }
 
     async createPlan(inputTask: InputTask): Promise<InputTaskResponse> {
-        return apiClient.post(API_ENDPOINTS.PROCESS_REQUEST, inputTask);
+        return apiClient.post<InputTaskResponse>(API_ENDPOINTS.PROCESS_REQUEST, inputTask);
     }
 
     /**

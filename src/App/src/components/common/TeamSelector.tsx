@@ -269,10 +269,12 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
         setUploadMessage(null);
 
         if (result.team) {
+          // Hoisted so the closure below keeps the narrowing from this `if`.
+          const uploadedTeamConfig = result.team;
           // Set success message with team name
-          setUploadSuccessMessage(`${result.team.name} was uploaded`);
+          setUploadSuccessMessage(`${uploadedTeamConfig.name} was uploaded`);
 
-          setTeams(currentTeams => [result.team!, ...currentTeams]);
+          setTeams(currentTeams => [uploadedTeamConfig, ...currentTeams]);
           setUploadedTeam(result.team);
           setTempSelectedTeam(result.team);
 
@@ -371,10 +373,12 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
         setUploadMessage(null);
 
         if (result.team) {
+          // Hoisted so the closure below keeps the narrowing from this `if`.
+          const uploadedTeamConfig = result.team;
           // Set success message with team name
-          setUploadSuccessMessage(`${result.team.name} was uploaded and selected`);
+          setUploadSuccessMessage(`${uploadedTeamConfig.name} was uploaded and selected`);
 
-          setTeams(currentTeams => [result.team!, ...currentTeams]);
+          setTeams(currentTeams => [uploadedTeamConfig, ...currentTeams]);
           setUploadedTeam(result.team);
           setTempSelectedTeam(result.team);
 

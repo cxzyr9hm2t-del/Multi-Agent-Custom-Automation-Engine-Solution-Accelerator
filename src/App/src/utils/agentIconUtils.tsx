@@ -26,7 +26,7 @@ import { iconMap } from '@/models/homeInput';
 
 // Extended icon mapping for user-uploaded string icons
 /** Minimal structural view of a team agent, as used for icon selection. */
-interface IconAgentLike {
+export interface IconAgentLike {
     name?: string;
     type?: string;
     input_key?: string;
@@ -34,7 +34,7 @@ interface IconAgentLike {
 }
 
 /** Minimal structural view of planData, whose `team` holds an agent roster. */
-interface TeamCarrier {
+export interface TeamCarrier {
     team?: { agents?: IconAgentLike[] } | null;
 }
 
@@ -43,7 +43,7 @@ interface TeamCarrier {
  * agent *names*, not the roster object planData carries — the two shapes differ,
  * which the previous `any` annotations obscured.
  */
-interface ApprovalContextCarrier {
+export interface ApprovalContextCarrier {
     team?: string[];
     context?: {
         // MPlanData declares this as Record<string, string>, but the code below reads

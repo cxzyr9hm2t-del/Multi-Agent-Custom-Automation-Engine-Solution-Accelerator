@@ -22,7 +22,7 @@ const teamSlice = createSlice({
     initialState,
     reducers: {
         setSelectedTeam(state, action: PayloadAction<TeamConfig | null>) {
-            state.selectedTeam = action.payload as any;
+            state.selectedTeam = action.payload;
         },
         setIsLoadingTeam(state, action: PayloadAction<boolean>) {
             state.isLoadingTeam = action.payload;

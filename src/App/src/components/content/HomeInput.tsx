@@ -1,3 +1,4 @@
+import { StartingTask } from '@/models/Team';
 import { ApiError } from '@/models';
 import {
   Body1Strong,
@@ -165,7 +166,7 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
             };
           } else {
             // Handle StartingTask objects
-            const startingTask = task as any; // Type assertion for now
+            const startingTask = task as StartingTask;
             const taskDescription =
               startingTask.prompt || startingTask.name || "Task description";
             return {

@@ -108,7 +108,7 @@ const Chat: React.FC<ChatProps> = ({
     });
   };
 
-  const isAsyncIterable = (value: any): value is AsyncIterable<any> => {
+  const isAsyncIterable = (value: unknown): value is AsyncIterable<unknown> => {
     return value !== null && typeof value === 'object' && Symbol.asyncIterator in value;
   };
 

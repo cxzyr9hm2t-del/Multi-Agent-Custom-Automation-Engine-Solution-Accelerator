@@ -95,6 +95,28 @@ function persistAgentMessage(
         });
 }
 
+/**
+ * Permissive view of a websocket callback argument.
+ *
+ * `on()` hands back a StreamMessage, but these handlers also read properties
+ * defensively from several payload shapes the backend has used. Spelling those out
+ * keeps the reads visible and checked, where `any` hid them entirely. Intersecting
+ * with StreamMessage narrows its `data?: unknown` to the shape below.
+ */
+type WsPayload = {
+    parsedData?: MPlanData;
+    rawData?: unknown;
+    content?: string;
+    message?: string;
+    data?: {
+        content?: string;
+        message?: string;
+        parsedData?: MPlanData;
+        data?: { content?: string };
+        [key: string]: unknown;
+    };
+};
+
 export function usePlanWebSocket({
     planId,
     scrollToBottom,
@@ -129,14 +151,15 @@ export function usePlanWebSocket({
     useEffect(() => {
         const unsub = webSocketService.on(
             WebsocketMessageType.PLAN_APPROVAL_REQUEST,
-            (approvalRequest: any) => {
+            (wsMessage: StreamMessage) => {
+                    const approvalRequest = wsMessage as StreamMessage & WsPayload;
                 let mPlanData: MPlanData | null = null;
                 if (approvalRequest.parsedData) {
                     mPlanData = approvalRequest.parsedData;
                 } else if (approvalRequest.data?.parsedData) {
                     mPlanData = approvalRequest.data.parsedData;
                 } else if (approvalRequest.data && typeof approvalRequest.data === 'object') {
-                    mPlanData = approvalRequest.data;
+                    mPlanData = approvalRequest.data as unknown as MPlanData;
                 } else if (approvalRequest.rawData) {
                     mPlanData = PlanDataService.parsePlanApprovalRequest(approvalRequest.rawData);
                 } else {
@@ -165,7 +188,8 @@ export function usePlanWebSocket({
 
         const unsub = webSocketService.on(
             WebsocketMessageType.AGENT_MESSAGE_STREAMING,
-            (msg: any) => {
+            (wsMessage: StreamMessage) => {
+                    const msg = wsMessage as StreamMessage & WsPayload;
                 const line = PlanDataService.simplifyHumanClarification(msg.data?.content || msg.content || '');
                 streamingChunkQueueRef.current.push(line);
                 if (streamingFlushHandleRef.current === null) {
@@ -192,18 +216,19 @@ export function usePlanWebSocket({
     useEffect(() => {
         const unsub = webSocketService.on(
             WebsocketMessageType.USER_CLARIFICATION_REQUEST,
-            (msg: any) => {
+            (wsMessage: StreamMessage) => {
+                    const msg = wsMessage as StreamMessage & WsPayload;
                 if (!msg) return;
                 const agentMessageData: AgentMessageData = {
                     agent: AgentType.GROUP_CHAT_MANAGER,
                     agent_type: AgentMessageType.AI_AGENT,
-                    timestamp: msg.timestamp || Date.now(),
+                    timestamp: (msg.timestamp as number) || Date.now(),
                     steps: [],
                     next_steps: [],
-                    content: msg.data.question || '',
-                    raw_data: msg.data || '',
+                    content: (msg.data?.question as string) || '',
+                    raw_data: (msg.data as unknown as string) || '',
                 };
-                dispatch(setClarificationMessage(msg.data as ParsedUserClarification));
+                dispatch(setClarificationMessage(msg.data as unknown as ParsedUserClarification));
                 dispatch(addAgentMessage(agentMessageData));
                 dispatch(setShowBufferingText(false));
                 dispatch(setShowProcessingPlanSpinner(false));
@@ -226,7 +251,8 @@ export function usePlanWebSocket({
     useEffect(() => {
         const unsub = webSocketService.on(
             WebsocketMessageType.FINAL_RESULT_MESSAGE,
-            (finalMessage: any) => {
+            (wsMessage: StreamMessage) => {
+                    const finalMessage = wsMessage as StreamMessage & WsPayload;
                 if (!finalMessage) return;
                 const completionElapsedSeconds = processingStartedAtRef.current
                     ? Math.max(Math.round((Date.now() - processingStartedAtRef.current) / 1000), 0)
@@ -244,7 +270,7 @@ export function usePlanWebSocket({
                         steps: [],
                         next_steps: [],
                         content: (finalMessage.data?.content || '') + completionTimeLine,
-                        raw_data: finalMessage,
+                        raw_data: finalMessage as unknown as string,
                     };
                     dispatch(setShowBufferingText(true));
                     dispatch(addAgentMessage(agentMessageData));
@@ -265,7 +291,7 @@ export function usePlanWebSocket({
                         steps: [],
                         next_steps: [],
                         content: formatErrorMessage(errorContent),
-                        raw_data: finalMessage,
+                        raw_data: finalMessage as unknown as string,
                     };
                     dispatch(addAgentMessage(errorAgent));
                     dispatch(planFailedFinal());
@@ -286,7 +312,7 @@ export function usePlanWebSocket({
                             steps: [],
                             next_steps: [],
                             content,
-                            raw_data: finalMessage,
+                            raw_data: finalMessage as unknown as string,
                         };
                         dispatch(addAgentMessage(terminalMessage));
                     }
@@ -305,7 +331,8 @@ export function usePlanWebSocket({
     useEffect(() => {
         const unsub = webSocketService.on(
             WebsocketMessageType.ERROR_MESSAGE,
-            (errorMessage: any) => {
+            (wsMessage: StreamMessage) => {
+                    const errorMessage = wsMessage as StreamMessage & WsPayload;
                 let errorContent = 'An unexpected error occurred. Please try again later.';
                 if (errorMessage?.data?.data?.content) {
                     const c = errorMessage.data.data.content.trim();
@@ -316,8 +343,8 @@ export function usePlanWebSocket({
                 } else if (errorMessage?.content) {
                     const c = errorMessage.content.trim();
                     if (c.length > 0) errorContent = c;
-                } else if (typeof errorMessage === 'string') {
-                    const c = errorMessage.trim();
+                } else if (typeof (errorMessage as unknown) === 'string') {
+                    const c = (errorMessage as unknown as string).trim();
                     if (c.length > 0) errorContent = c;
                 }
                 const errorAgent: AgentMessageData = {
@@ -327,7 +354,7 @@ export function usePlanWebSocket({
                     steps: [],
                     next_steps: [],
                     content: formatErrorMessage(errorContent),
-                    raw_data: errorMessage || '',
+                    raw_data: (errorMessage as unknown as string) || '',
                 };
                 dispatch(addAgentMessage(errorAgent));
                 dispatch(planFailedFinal());
@@ -346,7 +373,8 @@ export function usePlanWebSocket({
     useEffect(() => {
         const unsub = webSocketService.on(
             WebsocketMessageType.TIMEOUT_NOTIFICATION,
-            (msg: any) => {
+            (wsMessage: StreamMessage) => {
+                    const msg = wsMessage as StreamMessage & WsPayload;
                 const message = msg?.data?.message || msg?.message ||
                     'Session timed out. Please go back to home and try again.';
                 dispatch(setTimeoutMessage(message));
@@ -363,11 +391,12 @@ export function usePlanWebSocket({
     useEffect(() => {
         const unsub = webSocketService.on(
             WebsocketMessageType.AGENT_MESSAGE,
-            (agentMessage: any) => {
+            (wsMessage: StreamMessage) => {
+                    const agentMessage = wsMessage as StreamMessage & WsPayload;
                 // Only process agent messages after the user has approved the plan
                 if (!planApproved) return;
 
-                const agentMessageData = agentMessage.data as AgentMessageData;
+                const agentMessageData = agentMessage.data as unknown as AgentMessageData;
                 if (agentMessageData) {
                     agentMessageData.content = PlanDataService.simplifyHumanClarification(
                         agentMessageData?.content,

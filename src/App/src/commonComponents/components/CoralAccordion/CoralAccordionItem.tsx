@@ -19,7 +19,8 @@ const CoralAccordionItem: React.FC<CoralAccordionItemProps> = ({
         if (!isValidElement(child)) return child;
 
         const type =
-          (child.type as any)?.displayName || (child.type as any)?.name || "";
+          (child.type as { displayName?: string; name?: string })?.displayName ||
+          (child.type as { displayName?: string; name?: string })?.name || "";
 
         // Show CoralAccordionPanel only if open
         if (type === "CoralAccordionPanel") {

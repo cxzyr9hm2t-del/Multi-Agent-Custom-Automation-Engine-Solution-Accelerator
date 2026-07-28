@@ -3,9 +3,12 @@ import { useState, useCallback } from 'react';
 import { TeamConfig } from '../models/Team';
 import { TeamService } from '../store/TeamService';
 
+/** Result of a team upload, as returned by TeamService.uploadCustomTeam. */
+type TeamUploadResult = Awaited<ReturnType<typeof TeamService.uploadCustomTeam>>;
+
 interface UseTeamSelectionProps {
   sessionId?: string;
-  onTeamSelected?: (team: TeamConfig, result: any) => void;
+  onTeamSelected?: (team: TeamConfig, result: TeamUploadResult) => void;
   onError?: (error: string) => void;
 }
 

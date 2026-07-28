@@ -88,7 +88,7 @@ const planSlice = createSlice({
     initialState,
     reducers: {
         setPlanData(state, action: PayloadAction<ProcessedPlanData | null>) {
-            state.planData = action.payload as any;
+            state.planData = action.payload;
         },
         setLoading(state, action: PayloadAction<boolean>) {
             state.loading = action.payload;
@@ -100,7 +100,7 @@ const planSlice = createSlice({
             state.waitingForPlan = action.payload;
         },
         setPlanApprovalRequest(state, action: PayloadAction<MPlanData | null>) {
-            state.planApprovalRequest = action.payload as any;
+            state.planApprovalRequest = action.payload;
         },
         setProcessingApproval(state, action: PayloadAction<boolean>) {
             state.processingApproval = action.payload;
@@ -138,7 +138,7 @@ const planSlice = createSlice({
         /** Mark plan completed and update local state in one dispatch */
         markPlanCompleted(state) {
             if (state.planData?.plan) {
-                (state.planData as any).plan.overall_status = PlanStatus.COMPLETED;
+                state.planData.plan.overall_status = PlanStatus.COMPLETED;
             }
         },
 
@@ -160,7 +160,7 @@ const planSlice = createSlice({
         },
         /** Single dispatch when PLAN_APPROVAL_REQUEST arrives via WebSocket */
         approvalRequestReceived(state, action: PayloadAction<MPlanData>) {
-            state.planApprovalRequest = action.payload as any;
+            state.planApprovalRequest = action.payload;
             state.waitingForPlan = false;
             state.showProcessingPlanSpinner = false;
             state.showApprovalButtons = true;
@@ -169,7 +169,7 @@ const planSlice = createSlice({
         planCompletedFinal(state) {
             state.showProcessingPlanSpinner = false;
             if (state.planData?.plan) {
-                (state.planData as any).plan.overall_status = PlanStatus.COMPLETED;
+                state.planData.plan.overall_status = PlanStatus.COMPLETED;
             }
         },
 
@@ -177,7 +177,7 @@ const planSlice = createSlice({
         planFailedFinal(state) {
             state.showProcessingPlanSpinner = false;
             if (state.planData?.plan) {
-                (state.planData as any).plan.overall_status = PlanStatus.FAILED;
+                state.planData.plan.overall_status = PlanStatus.FAILED;
             }
         },
 
@@ -216,10 +216,10 @@ const planSlice = createSlice({
                 }
 
                 if (planResult?.mplan) {
-                    state.planApprovalRequest = planResult.mplan as any;
+                    state.planApprovalRequest = planResult.mplan;
                 }
 
-                state.planData = planResult as any;
+                state.planData = planResult;
             })
             .addCase(fetchPlanData.rejected, (state) => {
                 state.loading = false;
