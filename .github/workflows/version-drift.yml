@@ -1,0 +1,37 @@
+name: Dependency Version Drift
+
+# Advisory only — this never fails the build. Each service owns its own
+# dependency set by design, so drift is not automatically wrong. It is a hazard
+# because a security bump applied to one manifest does not reach the others,
+# which is exactly how python-multipart came to sit at 0.0.20, 0.0.27 and 0.0.32
+# simultaneously, with CI's copy hardened while both production surfaces stayed
+# vulnerable. The report makes that visible at review time instead of at audit
+# time. Add --strict once the existing divergences have been resolved.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened, synchronize]
+    paths:
+      - '**/pyproject.toml'
+      - '**/requirements.txt'
+      - '.github/scripts/check_version_drift.py'
+      - '.github/workflows/version-drift.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Report cross-manifest version drift
+        run: python .github/scripts/check_version_drift.py | tee "$GITHUB_STEP_SUMMARY"

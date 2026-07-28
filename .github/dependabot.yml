@@ -43,3 +43,66 @@ updates:
       python-deps:
         patterns:
           - "*"
+
+  # ── Surfaces added after a July 2026 audit ─────────────────────────────────
+  # The manifests that had decayed worst were exactly the ones not listed above:
+  # src/mcp_server was holding starlette 0.38.6 with seven unpatched advisories
+  # (the oldest unfixed for roughly two years), the src/App npm tree carried a
+  # critical vitest advisory, and .github/requirements.txt carried two CVSS 9.9
+  # semantic-kernel advisories on a package with zero imports. None of them were
+  # watched. Coverage is the fix — without it these silently rot again.
+
+  - package-ecosystem: "pip"
+    directory: "/src/mcp_server"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "build"
+    target-branch: "dependabotchanges"
+    open-pull-requests-limit: 10
+    groups:
+      python-deps:
+        patterns:
+          - "*"
+
+  # The frontend dependency tree. Held the only critical advisory in the audit.
+  - package-ecosystem: "npm"
+    directory: "/src/App"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "build"
+    target-branch: "dependabotchanges"
+    open-pull-requests-limit: 10
+    groups:
+      npm-deps:
+        patterns:
+          - "*"
+
+  # CI's own dependency set — installed onto runners on every test run.
+  - package-ecosystem: "pip"
+    directory: "/.github"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "build"
+    target-branch: "dependabotchanges"
+    open-pull-requests-limit: 10
+    groups:
+      python-deps:
+        patterns:
+          - "*"
+
+  # Post-provision scripts. Run against real Azure resources during deployment.
+  - package-ecosystem: "pip"
+    directory: "/infra/scripts/post-provision"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "build"
+    target-branch: "dependabotchanges"
+    open-pull-requests-limit: 10
+    groups:
+      python-deps:
+        patterns:
+          - "*"
