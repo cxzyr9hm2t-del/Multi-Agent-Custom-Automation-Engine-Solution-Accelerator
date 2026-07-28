@@ -2,7 +2,7 @@ type EventCallback = (...args: any[]) => void;
 
 class EventBus {
   private events: { [key: string]: EventCallback[] } = {};
-  private panelWidth: number = 400;
+  private panelWidth = 400;
   private activePanel: "first" | "second" | "third" | "fourth" | null = null;
 
   on(event: string, callback: EventCallback) {

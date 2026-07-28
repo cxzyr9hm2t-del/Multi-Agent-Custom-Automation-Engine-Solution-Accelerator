@@ -166,7 +166,7 @@ export class TaskService {
   static cleanHRAgent(text: string): string {
     if (!text) return "";
     // Replace any non-alphanumeric character with a space
-    let cleanedText = text
+    const cleanedText = text
       .replace("Hr_Agent", "HR Agent")
       .replace("Hr Agent", "HR Agent")
       .trim();
@@ -197,7 +197,7 @@ export class TaskService {
     } catch (error: any) {
 
       // You can customize this logic as needed
-      let message = "Unable to create plan. Please try again.";
+      const message = "Unable to create plan. Please try again.";
 
       throw new Error(message);
     }

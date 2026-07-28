@@ -197,7 +197,7 @@ const Chat: React.FC<ChatProps> = ({
                         icon={<Copy />}
                       />
                       <Button
-                        onClick={() => {}}
+                        onClick={() => { /* intentional no-op */ }}
                         title="Like"
                         appearance="subtle"
                         style={{ height: 28, width: 28 }}

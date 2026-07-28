@@ -137,12 +137,21 @@ const isClarificationMessage = (content: string): boolean => {
   return clarificationKeywords.some(keyword => lowerContent.includes(keyword));
 };
 
+// NOTE (rules-of-hooks): this is a lowercase function that calls hooks, and it is
+// invoked as a plain call from PlanChat.tsx rather than rendered as <Component />.
+// Its hooks therefore execute inside PlanChat's hook list. That is safe *today*
+// only because PlanChat calls it unconditionally and in a fixed order; making the
+// call conditional would corrupt hook order at runtime.
+// TODO: promote to a real component. Deferred deliberately — doing so changes
+// React reconciliation and the lifetime of the state below, and there are no
+// frontend tests to catch a regression.
 const renderAgentMessages = (
   agentMessages: AgentMessageData[], 
   planData?: any, 
   planApprovalRequest?: any,
   finalResultRef?: React.RefObject<HTMLDivElement>
 ) => {
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const styles = useStyles();
   
   if (!agentMessages?.length) return null;

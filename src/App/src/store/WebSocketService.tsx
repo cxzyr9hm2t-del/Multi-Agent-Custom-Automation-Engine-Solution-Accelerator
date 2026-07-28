@@ -30,7 +30,7 @@ class WebSocketService {
         // Leave ws/wss as-is; anything else is assumed already correct
 
         // Decide path addition
-        let userId = getUserId();
+        const userId = getUserId();
         const hasApiSegment = /\/api(\/|$)/i.test(base);
         const socketPath = hasApiSegment ? '/v4/socket' : '/api/v4/socket';
         const url = `${base}${socketPath}${processId ? `/${processId}` : `/${planId}`}?user_id=${userId || ''}`;

@@ -15,7 +15,7 @@ export let API_URL: string | null = null;
 export let USER_ID: string | null = null;
 export let USER_INFO: UserInfo | null = null;
 
-export let config = {
+export const config = {
     API_URL: "http://localhost:8000/api",
     ENABLE_AUTH: false,
 };

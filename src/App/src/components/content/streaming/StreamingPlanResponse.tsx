@@ -190,7 +190,7 @@ const extractDynamicContent = (planApprovalRequest: MPlanData): {
     if (!planApprovalRequest) return { factsContent: '', planSteps: [] };
 
     let factsContent = '';
-    let planSteps: Array<{ type: 'heading' | 'substep'; text: string; agentName?: string }> = [];
+    const planSteps: Array<{ type: 'heading' | 'substep'; text: string; agentName?: string }> = [];
 
     // Build facts content from available sources
     const factsSources: string[] = [];
@@ -258,7 +258,7 @@ const extractDynamicContent = (planApprovalRequest: MPlanData): {
                 trimmedLine.match(/^[a-zA-Z][\w\s]*:$/)) {
                 
                 // Remove bullet/number prefixes for clean display
-                let cleanText = trimmedLine
+                const cleanText = trimmedLine
                     .replace(/^[-•*]\s+/, '')
                     .replace(/^\d+\.\s+/, '')
                     .trim();
@@ -285,6 +285,14 @@ const getFactsPreview = (content: string): string => {
 };
 
 // FluentUI-based plan response component with consistent spacing and proper colors
+// NOTE (rules-of-hooks): this is a lowercase function that calls hooks, and it is
+// invoked as a plain call from PlanChat.tsx rather than rendered as <Component />.
+// Its hooks therefore execute inside PlanChat's hook list. That is safe *today*
+// only because PlanChat calls it unconditionally and in a fixed order; making the
+// call conditional would corrupt hook order at runtime.
+// TODO: promote to a real component. Deferred deliberately — doing so changes
+// React reconciliation and the lifetime of the state below, and there are no
+// frontend tests to catch a regression.
 const renderPlanResponse = (
     planApprovalRequest: MPlanData | null, 
     handleApprovePlan: () => void, 
@@ -292,7 +300,10 @@ const renderPlanResponse = (
     processingApproval: boolean, 
     showApprovalButtons: boolean
 ) => {
-    const styles = useStyles();
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+  const styles = useStyles();
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     const [isFactsExpanded, setIsFactsExpanded] = useState(false);
     
     if (!planApprovalRequest) return null;

@@ -225,8 +225,8 @@ export class PlanDataService {
   static createAgentMessageResponse(
     agentMessage: AgentMessageData,
     planData: ProcessedPlanData,
-    is_final: boolean = false,
-    streaming_message: string = ''
+    is_final = false,
+    streaming_message = ''
   ): AgentMessageResponse {
     if (!planData || !planData.plan) {
       console.warn("Invalid plan data provided to createAgentMessageResponse");
@@ -355,7 +355,7 @@ export class PlanDataService {
       const user_id = pick(/user_id='([^']*)'/) || '';
       const team_id = pick(/team_id='([^']*)'/) || '';
       const plan_id = pick(/plan_id='([^']*)'/) || '';
-      let overall_status =
+      const overall_status =
         pick(/overall_status=<PlanStatus\.([a-zA-Z_]+):/, true) ||
         pick(/overall_status='([^']+)'/, true) ||
         'PENDING_APPROVAL';
@@ -802,7 +802,7 @@ export class PlanDataService {
       const qMatch = source.match(questionRegex);
       if (!qMatch) return null;
 
-      let question = (qMatch[1] ?? qMatch[2] ?? '')
+      const question = (qMatch[1] ?? qMatch[2] ?? '')
         .replace(/\\n/g, '\n')
         .replace(/\\'/g, "'")
         .replace(/\\"/g, '"')
