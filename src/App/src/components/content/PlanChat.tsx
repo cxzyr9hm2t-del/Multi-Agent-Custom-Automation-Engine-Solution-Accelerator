@@ -36,8 +36,6 @@ const PlanChat: React.FC<SimplifiedPlanChatProps> = ({
   setInput,
   submittingChatDisableInput,
   OnChatSubmit,
-  onPlanApproval,
-  onPlanReceived,
   initialTask,
   planApprovalRequest,
   waitingForPlan,

@@ -1,4 +1,8 @@
-type EventCallback = (...args: any[]) => void;
+// `never[]` rather than `unknown[]`: parameters are checked contravariantly under
+// `strict`, so a handler such as `(panel: "first" | null) => void` is assignable to
+// `(...args: never[]) => void` but not to `(...args: unknown[]) => void`. This keeps
+// the bus accepting arbitrary handlers without reaching for `any`.
+type EventCallback = (...args: never[]) => void;
 
 class EventBus {
   private events: { [key: string]: EventCallback[] } = {};
@@ -17,9 +21,14 @@ class EventBus {
     this.events[event] = this.events[event].filter(cb => cb !== callback);
   }
 
-  emit(event: string, ...args: any[]) {
+  emit(event: string, ...args: unknown[]) {
     if (!this.events[event]) return;
-    this.events[event].forEach(callback => callback(...args));
+    // The bus is deliberately untyped across event names, so the payload cannot be
+    // reconciled with each handler's declared parameters here. The cast is erased at
+    // compile time and the call is unchanged at runtime.
+    this.events[event].forEach(callback =>
+      (callback as (...a: unknown[]) => void)(...args)
+    );
   }
 
   // Panel control

@@ -1,3 +1,4 @@
+import { ApiError } from '@/models';
 import {
   Body1Strong,
   Button,
@@ -115,7 +116,8 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
           showToast("Failed to create plan", "error");
           dismissToast(id);
         }
-      } catch (error: any) {
+      } catch (caught) {
+          const error = caught as ApiError;
         let errorMessage = "Unable to create plan. Please try again.";
         dismissToast(id);
         // Check if this is an RAI validation error

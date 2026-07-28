@@ -36,7 +36,6 @@ interface ChatProps {
 
 const Chat: React.FC<ChatProps> = ({
   userId,
-  children,
   onSendMessage,
   onSaveMessage,
   onLoadHistory,

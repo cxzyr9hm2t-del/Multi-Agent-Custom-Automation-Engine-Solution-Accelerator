@@ -3,7 +3,7 @@ export type UserInfo = {
     expires_on: string;
     id_token: string;
     provider_name: string;
-    user_claims: any[];
+    user_claims: claim[];
     user_email: string;
     user_first_last_name: string;
     user_id: string;

@@ -10,12 +10,6 @@ import { getAgentIcon, getAgentDisplayName } from '@/utils/agentIconUtils';
 import { formatJsonInText } from '@/utils/jsonFormatter';
 import { resolveApiAssetUrl } from "@/api/config";
 
-interface StreamingAgentMessageProps {
-  agentMessages: AgentMessageData[];
-  planData?: any;
-  planApprovalRequest?: any;
-}
-
 const useStyles = makeStyles({
   container: {
     maxWidth: '800px',

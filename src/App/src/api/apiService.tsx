@@ -14,6 +14,16 @@ import {
     AgentMessageResponse
 } from '../models';
 
+// Wire shape of GET /v4/plan. Distinct from PlanFromAPI, which is what this service
+// returns after assembling the response.
+interface PlanByIdResponse {
+    plan: Plan;
+    messages: AgentMessageBE[];
+    m_plan: MPlanBE | null;
+    team: TeamConfigurationBE | null;
+    streaming_message: string | null;
+}
+
 // Constants for endpoints
 const API_ENDPOINTS = {
     PROCESS_REQUEST: '/v4/process_request',
@@ -108,7 +118,7 @@ export class APIService {
      * @returns Promise with the response containing plan ID and status
      */
     // async createPlan(inputTask: InputTask): Promise<{ plan_id: string; status: string; session_id: string }> {
-    //     return apiClient.post(API_ENDPOINTS.PROCESS_REQUEST, inputTask);
+    //     return apiClient.post<InputTaskResponse>(API_ENDPOINTS.PROCESS_REQUEST, inputTask);
     // }
 
     async createPlan(inputTask: InputTask): Promise<InputTaskResponse> {
@@ -125,7 +135,7 @@ export class APIService {
         const cacheKey = `plans_${sessionId || 'all'}`;
         const params = sessionId ? { session_id: sessionId } : {};
         const fetcher = async () => {
-            const data = await apiClient.get(API_ENDPOINTS.PLANS, { params });
+            const data = await apiClient.get<Plan[]>(API_ENDPOINTS.PLANS, { params });
             if (useCache) {
                 this._cache.set(cacheKey, data, 30000); // Cache for 30 seconds
             }
@@ -150,7 +160,7 @@ export class APIService {
         const params = { plan_id: planId };
 
         const fetcher = async () => {
-            const data = await apiClient.get(API_ENDPOINTS.PLAN, { params });
+            const data = await apiClient.get<PlanByIdResponse>(API_ENDPOINTS.PLAN, { params });
 
             // The API returns an array, but with plan_id filter it should have only one item
             if (!data) {
@@ -189,7 +199,7 @@ export class APIService {
         const requestKey = `approve-plan-${planApprovalData.m_plan_id}`;
 
         return this._requestTracker.trackRequest(requestKey, async () => {
-            const response = await apiClient.post(API_ENDPOINTS.PLAN_APPROVAL, planApprovalData);
+            const response = await apiClient.post<PlanApprovalResponse>(API_ENDPOINTS.PLAN_APPROVAL, planApprovalData);
 
             // Invalidate cache since plan execution will start
             this._cache.invalidate(new RegExp(`^plans_`));
@@ -222,7 +232,7 @@ export class APIService {
             m_plan_id
         };
 
-        const response = await apiClient.post(
+        const response = await apiClient.post<{ status: string; session_id: string }>(
             API_ENDPOINTS.HUMAN_CLARIFICATION,
             clarificationData
         );
@@ -250,13 +260,13 @@ export class APIService {
      */
     async sendUserBrowserLanguage(): Promise<{ status: string }> {
         const language = navigator.language || navigator.languages[0] || 'en';
-        const response = await apiClient.post(API_ENDPOINTS.USER_BROWSER_LANGUAGE, {
+        const response = await apiClient.post<{ status: string }>(API_ENDPOINTS.USER_BROWSER_LANGUAGE, {
             language
         });
         return response;
     }
     async sendAgentMessage(data: AgentMessageResponse): Promise<AgentMessage> {
-        const result = await apiClient.post(API_ENDPOINTS.AGENT_MESSAGE, data);
+        const result = await apiClient.post<AgentMessage>(API_ENDPOINTS.AGENT_MESSAGE, data);
         return result;
     }
 }

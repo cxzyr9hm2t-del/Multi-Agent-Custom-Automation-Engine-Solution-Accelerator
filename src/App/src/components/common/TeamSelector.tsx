@@ -1,3 +1,4 @@
+import { ApiError } from '@/models';
 import React, { useState } from 'react';
 import {
   Button,
@@ -48,7 +49,6 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
   onTeamSelect,
   onTeamUpload,
   selectedTeam,
-  isHomePage,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [teams, setTeams] = useState<TeamConfig[]>([]);
@@ -79,7 +79,8 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
     try {
       const teamsData = await TeamService.getUserTeams();
       setTeams(teamsData);
-    } catch (err: any) {
+    } catch (caught) {
+        const err = caught as ApiError;
       setError(err.message || 'Failed to load teams');
     } finally {
       setLoading(false);
@@ -199,7 +200,8 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
         setDeleteConfirmOpen(false);
         setTeamToDelete(null);
       }
-    } catch (err: any) {
+    } catch (caught) {
+        const err = caught as ApiError;
       let errorMessage = 'Failed to delete team configuration. Please try again.';
 
       if (err.response?.status === 404) {
@@ -295,7 +297,8 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
         setError(result.error || 'Failed to upload team configuration');
         setUploadMessage(null);
       }
-    } catch (err: any) {
+    } catch (caught) {
+        const err = caught as ApiError;
       setError(err.message || 'Failed to upload team configuration');
       setUploadMessage(null);
     } finally {
@@ -397,7 +400,8 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
         setError(result.error || 'Failed to upload team configuration');
         setUploadMessage(null);
       }
-    } catch (err: any) {
+    } catch (caught) {
+        const err = caught as ApiError;
       setError(err.message || 'Failed to upload team configuration');
       setUploadMessage(null);
     } finally {

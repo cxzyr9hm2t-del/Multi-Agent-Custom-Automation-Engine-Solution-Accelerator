@@ -1,4 +1,4 @@
-import { Plan, PlanStatus } from "../models";
+import { Plan, PlanStatus, ApiError } from "../models";
 import { Task } from "../models/taskList";
 import { apiService } from "../api/apiService";
 import { InputTask, InputTaskResponse } from "../models/inputTask";
@@ -194,7 +194,8 @@ export class TaskService {
 
     try {
       return await apiService.createPlan(inputTask);
-    } catch (error: any) {
+    } catch (caught) {
+        const error = caught as ApiError;
 
       // You can customize this logic as needed
       const message = "Unable to create plan. Please try again.";

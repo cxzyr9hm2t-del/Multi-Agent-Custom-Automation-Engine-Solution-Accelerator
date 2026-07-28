@@ -1,3 +1,4 @@
+import { ApiError } from '@/models';
 import { useState, useCallback } from 'react';
 import { TeamConfig } from '../models/Team';
 import { TeamService } from '../store/TeamService';
@@ -54,7 +55,8 @@ export const useTeamSelection = ({
 
         return false;
       }
-    } catch (err: any) {
+    } catch (caught) {
+        const err = caught as ApiError;
       const errorMessage = err.message || 'Failed to select team';
       setError(errorMessage);
 

@@ -1,5 +1,25 @@
+import { ApiError } from '@/models';
 import { TeamConfig } from '../models/Team';
 import { apiClient } from '../api/apiClient';
+
+/**
+ * Validation failure returned by the team-config upload endpoint. The three
+ * variants (RAI, search-index, model) share one shape; callers currently only
+ * test them for presence.
+ */
+export interface TeamValidationError {
+    error_type: string;
+    message: string;
+    description: string;
+}
+
+/** Wire shape of GET /v4/init_team. */
+export interface InitTeamResponse {
+    status: string;
+    team_id?: string;
+    team?: TeamConfig;
+    requires_team_upload?: boolean;
+}
 
 export class TeamService {
     /**
@@ -25,16 +45,11 @@ export class TeamService {
      */
     static async initializeTeam(team_switched = false): Promise<{
         success: boolean;
-        data?: {
-            status: string;
-            team_id?: string;
-            team?: any;
-            requires_team_upload?: boolean;
-        };
+        data?: InitTeamResponse;
         error?: string;
     }> {
         try {
-            const response = await apiClient.get('/v4/init_team', {
+            const response = await apiClient.get<InitTeamResponse>('/v4/init_team', {
                 params: {
                     team_switched
                 }
@@ -44,7 +59,8 @@ export class TeamService {
                 success: true,
                 data: response
             };
-        } catch (error: any) {
+        } catch (caught) {
+            const error = caught as ApiError;
             let errorMessage = 'Failed to initialize team';
 
             if (error.response?.data?.detail) {
@@ -85,18 +101,24 @@ export class TeamService {
     }
 
     static async uploadCustomTeam(teamFile: File): Promise<{
-        modelError?: any; success: boolean; team?: TeamConfig; error?: string; raiError?: any; searchError?: any
+        modelError?: TeamValidationError;
+        success: boolean;
+        team?: TeamConfig;
+        error?: string;
+        raiError?: TeamValidationError;
+        searchError?: TeamValidationError;
     }> {
         try {
             const formData = new FormData();
             formData.append('file', teamFile);
-            const response = await apiClient.upload('/v4/upload_team_config', formData);
+            const response = await apiClient.upload<{ team?: TeamConfig }>('/v4/upload_team_config', formData);
 
             return {
                 success: true,
                 team: response.team
             };
-        } catch (error: any) {
+        } catch (caught) {
+            const error = caught as ApiError;
 
             // Check if this is an RAI validation error
             const errorDetail = error.response?.data?.detail || error.response?.data;
@@ -196,7 +218,8 @@ export class TeamService {
                 success: true,
                 data: response
             };
-        } catch (error: any) {
+        } catch (caught) {
+            const error = caught as ApiError;
             let errorMessage = 'Failed to select team';
 
             if (error.response?.data?.detail) {

@@ -20,32 +20,32 @@ function syncBaseUrl(): void {
 }
 
 export const apiClient = {
-    get: <T = any>(url: string, config?: { params?: Record<string, unknown> }): Promise<T> => {
+    get: <T = unknown>(url: string, config?: { params?: Record<string, unknown> }): Promise<T> => {
         syncBaseUrl();
         return httpClient.get<T>(url, { params: config?.params });
     },
 
-    post: <T = any>(url: string, body?: unknown): Promise<T> => {
+    post: <T = unknown>(url: string, body?: unknown): Promise<T> => {
         syncBaseUrl();
         return httpClient.post<T>(url, body);
     },
 
-    put: <T = any>(url: string, body?: unknown): Promise<T> => {
+    put: <T = unknown>(url: string, body?: unknown): Promise<T> => {
         syncBaseUrl();
         return httpClient.put<T>(url, body);
     },
 
-    delete: <T = any>(url: string): Promise<T> => {
+    delete: <T = unknown>(url: string): Promise<T> => {
         syncBaseUrl();
         return httpClient.del<T>(url);
     },
 
-    upload: <T = any>(url: string, formData: FormData): Promise<T> => {
+    upload: <T = unknown>(url: string, formData: FormData): Promise<T> => {
         syncBaseUrl();
         return httpClient.upload<T>(url, formData);
     },
 
-    login: <T = any>(url: string, body?: unknown): Promise<T> => {
+    login: <T = unknown>(url: string, body?: unknown): Promise<T> => {
         syncBaseUrl();
         return httpClient.postWithoutAuth<T>(url, body);
     },

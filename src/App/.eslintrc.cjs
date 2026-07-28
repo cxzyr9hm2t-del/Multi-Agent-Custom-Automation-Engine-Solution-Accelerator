@@ -44,5 +44,15 @@ module.exports = {
         // TypeScript already checks prop shapes at compile time; runtime
         // propTypes are redundant in a .tsx codebase.
         'react/prop-types': 'off',
+        // The codebase already marks deliberately-unused bindings with a leading
+        // underscore — chiefly the `node` argument in react-markdown component
+        // overrides, which must stay destructured so it is excluded from the
+        // `...props` spread onto the DOM element. Deleting those bindings would
+        // change rendered output; naming them is the correct signal, so honour it.
+        '@typescript-eslint/no-unused-vars': ['warn', {
+            argsIgnorePattern: '^_',
+            varsIgnorePattern: '^_',
+            caughtErrorsIgnorePattern: '^_',
+        }],
     }
 };

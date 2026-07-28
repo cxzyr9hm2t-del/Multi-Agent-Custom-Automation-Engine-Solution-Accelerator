@@ -14,12 +14,10 @@ interface SimplifiedPlanChatProps extends PlanChatProps {
 }
 
 const PlanChatBody: React.FC<SimplifiedPlanChatProps> = ({
-    planData,
     input,
     setInput,
     submittingChatDisableInput,
     OnChatSubmit,
-    waitingForPlan
 }) => {
     return (
         <div
