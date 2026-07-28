@@ -14,7 +14,6 @@ opentelemetry-instrumentation-fastapi==0.61b0
 opentelemetry-instrumentation-openai==0.61.0
 opentelemetry-exporter-otlp-proto-http==1.40.0
 
-semantic-kernel[azure]==1.32.2
 azure-ai-projects==1.0.0b11
 openai==1.84.0
 azure-ai-inference==1.0.0b9

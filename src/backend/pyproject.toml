@@ -20,7 +20,10 @@ dependencies = [
     "azure-monitor-opentelemetry==1.8.7",
     "azure-search-documents==11.7.0b2",
     "azure-storage-blob==12.25.1",
-    "fastapi==0.136.1",
+    # Security: starlette < 1.3.1 ignores max_fields / max_part_size for
+    # x-www-form-urlencoded bodies (CVE-2026-54283). fastapi 0.140.0 is the
+    # first release that pulls a fixed starlette.
+    "fastapi==0.140.0",
     # OLD (restore to revert): "openai==1.105.0",
     # NOTE: openai v2 has breaking API changes vs v1; required by azure-ai-projects>=2.1.0
     "openai==2.34.0",
@@ -39,17 +42,17 @@ dependencies = [
     "opentelemetry-instrumentation-openai==0.60.0",
     # OLD (restore to revert): "opentelemetry-sdk==1.36.0",
     "opentelemetry-sdk==1.40.0",
-    "pytest==8.4.1",
-    "pytest-asyncio==0.24.0",
-    "pytest-cov==5.0.0",
-    "python-dotenv==1.1.1",
-    "python-multipart==0.0.20",
+    "python-dotenv==1.2.2",
+    # Security: unbounded part-header count/size (CVE-2026-42561) and O(n^2)
+    # parse of ';'-separated urlencoded bodies (CVE-2026-53539).
+    "python-multipart==0.0.32",
     "uvicorn==0.35.0",
     "pylint-pydantic==0.3.5",
     "pexpect==4.9.0",
     # agent-framework-core requires mcp>=1.24.0
     # OLD (restore to revert): "mcp==1.23.0",
-    "mcp==1.27.0",
+    # Security: CVE-2026-59950 is only fixed in 1.28.1, not 1.27.2.
+    "mcp==1.28.1",
     "werkzeug==3.1.8",
     "azure-core==1.40.0",
     # ── Agent Framework ────────────────────────────────────────────────────────
@@ -64,10 +67,29 @@ dependencies = [
     # "agent-framework-azure-ai==1.0.0rc6",  # Legacy bridge — required by v4/ code only
     "urllib3==2.7.0",
     "protobuf==6.33.6",
-    "cryptography==47.0.0",
-    "aiohttp==3.13.5",
-    "pyasn1==0.6.3",
-    "nltk==3.9.4",
+    # Security: vulnerable statically-linked OpenSSL in the manylinux wheels
+    # (GHSA-537c-gmf6-5ccf). 48.0.1 is the minimum fixed release — do not jump
+    # to 49.x, which drops older Python/OpenSSL support.
+    "cryptography==48.0.1",
+    "aiohttp==3.14.3",
+    "pyasn1==0.6.4",
+    "nltk==3.10.0",
+    # Transitive pins held for security. fastapi 0.140.0 alone resolves starlette
+    # 1.2.1, which still ignores max_fields / max_part_size on urlencoded bodies
+    # (CVE-2026-54283) — the fix requires 1.3.1 explicitly.
+    "starlette==1.3.1",
+    "pydantic-settings==2.14.2",
+]
+
+# Test toolchain lives here, not in [project.dependencies]. The Dockerfile runs
+# `uv sync --frozen --no-dev`, which excludes this group — previously pytest and
+# its plugins shipped in the production image. CI installs its own pytest from
+# .github/requirements.txt, so this move does not affect the test workflow.
+[dependency-groups]
+dev = [
+    "pytest==8.4.1",
+    "pytest-asyncio==0.24.0",
+    "pytest-cov==5.0.0",
 ]
 
 [tool.pylint."messages control"]
