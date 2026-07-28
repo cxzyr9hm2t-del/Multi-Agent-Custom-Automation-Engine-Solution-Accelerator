@@ -285,25 +285,29 @@ const getFactsPreview = (content: string): string => {
 };
 
 // FluentUI-based plan response component with consistent spacing and proper colors
-// NOTE (rules-of-hooks): this is a lowercase function that calls hooks, and it is
-// invoked as a plain call from PlanChat.tsx rather than rendered as <Component />.
-// Its hooks therefore execute inside PlanChat's hook list. That is safe *today*
-// only because PlanChat calls it unconditionally and in a fixed order; making the
-// call conditional would corrupt hook order at runtime.
-// TODO: promote to a real component. Deferred deliberately — doing so changes
-// React reconciliation and the lifetime of the state below, and there are no
-// frontend tests to catch a regression.
-const renderPlanResponse = (
-    planApprovalRequest: MPlanData | null, 
-    handleApprovePlan: () => void, 
-    handleRejectPlan: () => void, 
-    processingApproval: boolean, 
-    showApprovalButtons: boolean
-) => {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-  const styles = useStyles();
-    // eslint-disable-next-line react-hooks/rules-of-hooks
+//
+// This is a real component rather than a plain `render*` helper. As a helper it
+// called useStyles/useState directly into its caller's hook list, which put those
+// hooks below PlanChat's `if (!planData) return ...` early return — an unreachable
+// path today, but one that would corrupt hook order the moment a caller stopped
+// guarding. Rendered as <PlanResponse />, the hooks belong to this component's own
+// instance and the caller's control flow no longer matters.
+interface PlanResponseProps {
+    planApprovalRequest: MPlanData | null;
+    handleApprovePlan: () => void;
+    handleRejectPlan: () => void;
+    processingApproval: boolean;
+    showApprovalButtons: boolean;
+}
+
+const PlanResponse: React.FC<PlanResponseProps> = ({
+    planApprovalRequest,
+    handleApprovePlan,
+    handleRejectPlan,
+    processingApproval,
+    showApprovalButtons
+}) => {
+    const styles = useStyles();
     const [isFactsExpanded, setIsFactsExpanded] = useState(false);
     
     if (!planApprovalRequest) return null;
@@ -459,4 +463,4 @@ const renderPlanResponse = (
     );
 };
 
-export default renderPlanResponse;
+export default PlanResponse;

@@ -3,11 +3,11 @@ import { PlanChatProps, MPlanData } from "../../models/plan";
 import InlineToaster from "../toast/InlineToaster";
 import { AgentMessageData } from "@/models";
 import renderUserPlanMessage from "./streaming/StreamingUserPlanMessage";
-import renderPlanResponse from "./streaming/StreamingPlanResponse";
+import PlanResponse from "./streaming/StreamingPlanResponse";
 import { renderPlanExecutionMessage, renderThinkingState } from "./streaming/StreamingPlanState";
 import ContentNotFound from "../NotFound/ContentNotFound";
 import PlanChatBody from "./PlanChatBody";
-import renderAgentMessages from "./streaming/StreamingAgentMessage";
+import AgentMessages from "./streaming/StreamingAgentMessage";
 import StreamingBufferMessage from "./streaming/StreamingBufferMessage";
 
 interface SimplifiedPlanChatProps extends PlanChatProps {
@@ -85,8 +85,17 @@ const PlanChat: React.FC<SimplifiedPlanChatProps> = ({
         {renderThinkingState(waitingForPlan)}
 
         {/* Plan response with all information */}
-        {renderPlanResponse(planApprovalRequest, handleApprovePlan, handleRejectPlan, processingApproval, showApprovalButtons)}
-        {renderAgentMessages(agentMessages, undefined, undefined, finalResultRef)}
+        <PlanResponse
+          planApprovalRequest={planApprovalRequest}
+          handleApprovePlan={handleApprovePlan}
+          handleRejectPlan={handleRejectPlan}
+          processingApproval={processingApproval}
+          showApprovalButtons={showApprovalButtons}
+        />
+        <AgentMessages
+          agentMessages={agentMessages}
+          finalResultRef={finalResultRef}
+        />
 
         {showProcessingPlanSpinner && renderPlanExecutionMessage(processingElapsedSeconds, processingStatusMessage)}
         {/* Streaming plan updates — hidden while an approval prompt is pending so
