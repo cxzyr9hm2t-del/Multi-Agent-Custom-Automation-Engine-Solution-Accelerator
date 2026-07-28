@@ -36,7 +36,7 @@ const getIconFromString = (
 
 const truncateDescription = (
   description: string,
-  maxLength: number = 180
+  maxLength = 180
 ): string => {
   if (!description) return "";
 
@@ -93,7 +93,7 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
   const handleSubmit = async () => {
     if (input.trim()) {
       setSubmitting(true);
-      let id = showToast("Creating a plan", "progress");
+      const id = showToast("Creating a plan", "progress");
 
       try {
         const response = await TaskService.createPlan(

@@ -167,4 +167,8 @@ const ChatInput = forwardRef<HTMLTextAreaElement, ChatInputProps>(
   }
 );
 
+// forwardRef components have no inferred name in React DevTools or in
+// react/display-name; set it explicitly.
+ChatInput.displayName = 'ChatInput';
+
 export default ChatInput;

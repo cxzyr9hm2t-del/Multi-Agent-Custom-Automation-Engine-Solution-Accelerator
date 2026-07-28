@@ -36,7 +36,7 @@ const AppWrapper = () => {
         setEnvData(config);
         setApiUrl(config.API_URL);
         setConfig(config);
-        let defaultUserInfo = await getUserInfo();
+        const defaultUserInfo = await getUserInfo();
         window.userInfo = defaultUserInfo;
         setUserInfoGlobal(defaultUserInfo);
         await apiService.sendUserBrowserLanguage();

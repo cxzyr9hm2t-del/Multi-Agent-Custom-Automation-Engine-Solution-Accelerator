@@ -216,7 +216,7 @@ export function usePlanWebSocket({
 
     // ── AGENT_TOOL_MESSAGE (currently no-op, kept for future) ─────
     useEffect(() => {
-        const unsub = webSocketService.on(WebsocketMessageType.AGENT_TOOL_MESSAGE, () => {});
+        const unsub = webSocketService.on(WebsocketMessageType.AGENT_TOOL_MESSAGE, () => { /* intentional no-op */ });
         return unsub;
     }, []);
 
@@ -410,8 +410,8 @@ export function usePlanWebSocket({
             WebsocketMessageType.AGENT_MESSAGE,
             handleStreamingMessage,
         );
-        const unsubApproval = webSocketService.on(WebsocketMessageType.PLAN_APPROVAL_RESPONSE, () => {});
-        const unsubApprovalReq = webSocketService.on(WebsocketMessageType.PLAN_APPROVAL_REQUEST, () => {});
+        const unsubApproval = webSocketService.on(WebsocketMessageType.PLAN_APPROVAL_RESPONSE, () => { /* intentional no-op */ });
+        const unsubApprovalReq = webSocketService.on(WebsocketMessageType.PLAN_APPROVAL_REQUEST, () => { /* intentional no-op */ });
 
         return () => {
             unsubConnection();

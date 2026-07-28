@@ -592,7 +592,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
                     ) : searchQuery ? (
                       <div className={styles.noTeamsContainer}>
                         <Text size={400} className={styles.noTeamsText}>
-                          No teams found matching "{searchQuery}"
+                          No teams found matching &quot;{searchQuery}&quot;
                         </Text>
                       </div>
                     ) : (
@@ -718,7 +718,7 @@ const TeamSelector: React.FC<TeamSelectorProps> = ({
           <DialogContent className={styles.deleteDialogContent}>
             <DialogBody className={styles.deleteDialogBody}>
               <DialogTitle className={styles.deleteDialogTitle}>
-                Are you sure you want to delete "{teamToDelete?.name}"?
+                Are you sure you want to delete &quot;{teamToDelete?.name}&quot;?
               </DialogTitle>
               <Text className={styles.deleteConfirmText}>
                 This team configuration and its agents are shared across all users in the system. Deleting this team will permanently remove it for everyone, and this action cannot be undone.

@@ -210,10 +210,10 @@ export class APIService {
      * @returns Promise with response object
      */
     async submitClarification(
-        request_id: string = "",
-        answer: string = "",
-        plan_id: string = "",
-        m_plan_id: string = ""
+        request_id = "",
+        answer = "",
+        plan_id = "",
+        m_plan_id = ""
     ): Promise<{ status: string; session_id: string }> {
         const clarificationData: HumanClarification = {
             request_id,

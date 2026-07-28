@@ -149,7 +149,7 @@ const PlanPage: React.FC = () => {
     const { isPlanActive } = usePlanCancellationAlert({
         planData,
         planApprovalRequest,
-        onNavigate: pendingNavigation || (() => {}),
+        onNavigate: pendingNavigation || (() => { /* intentional no-op */ }),
     });
 
     /* ── Memoized formatErrorMessage ────────────────────────── */
@@ -357,8 +357,8 @@ const PlanPage: React.FC = () => {
                         reloadTasks={reloadLeftList}
                         onNewTaskButton={handleNewTaskButton}
                         restReload={resetReload}
-                        onTeamSelect={() => {}}
-                        onTeamUpload={async () => {}}
+                        onTeamSelect={() => { /* intentional no-op */ }}
+                        onTeamUpload={async () => { /* intentional no-op */ }}
                         isHomePage={false}
                         selectedTeam={selectedTeam}
                         onNavigationWithAlert={handleNavigationWithAlert}
@@ -381,8 +381,8 @@ const PlanPage: React.FC = () => {
                     reloadTasks={reloadLeftList}
                     onNewTaskButton={handleNewTaskButton}
                     restReload={resetReload}
-                    onTeamSelect={() => {}}
-                    onTeamUpload={async () => {}}
+                    onTeamSelect={() => { /* intentional no-op */ }}
+                    onTeamUpload={async () => { /* intentional no-op */ }}
                     isHomePage={false}
                     selectedTeam={selectedTeam}
                     onNavigationWithAlert={handleNavigationWithAlert}

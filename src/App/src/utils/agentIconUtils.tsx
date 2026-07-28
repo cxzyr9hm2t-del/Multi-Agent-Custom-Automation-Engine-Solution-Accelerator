@@ -225,7 +225,7 @@ export const getAgentIcon = (
     agentName: string,
     planData?: any,
     planApprovalRequest?: any,
-    iconColor: string = 'var(--colorNeutralForeground2)'
+    iconColor = 'var(--colorNeutralForeground2)'
 ): React.ReactNode => {
     const iconStyle = { fontSize: '16px', color: iconColor };
 
