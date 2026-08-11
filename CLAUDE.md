@@ -22,7 +22,7 @@ Setup per Python service, run inside the service directory:
 uv sync --frozen          # installs from that service's uv.lock
 ```
 
-`--extra dev` applies to **`src/mcp_server` only** — it is the one service that declares `[project.optional-dependencies] dev`. `src/backend` currently carries `pytest`, `pytest-asyncio` and `pytest-cov` in `[project.dependencies]` instead, so they install unconditionally.
+`--extra dev` applies to **`src/mcp_server` only** — it is the one service that declares `[project.optional-dependencies] dev`. `src/backend` keeps its test toolchain (`pytest`, `pytest-asyncio`, `pytest-cov`) in `[dependency-groups] dev`, which `uv sync` installs by default — no extra flag needed. Its Dockerfile passes `--no-dev`, so the group stays out of the production image.
 
 Frontend (in `src/App`): `npm ci`, then `npm run build` (`tsc && vite build`, output goes to `build/`). `npm run dev` starts the Vite dev server; `python frontend_server.py` serves the built app and can proxy API/WS requests to the backend (`PROXY_API_REQUESTS`).
 
@@ -66,9 +66,9 @@ Frontend: `npm test` (vitest) in `src/App`. Note there are currently **no fronte
 flake8 --config=.flake8 src/backend      # what CI checks
 ```
 
-`.flake8`: `max-line-length = 88`, `extend-ignore = E501`, `ignore = E203, W503, G004, G200, E402`. Its `exclude` list still names `frontend`, `src/frontend` and `src/backend/tests` — all directories that no longer exist. Harmless, so left alone.
+`.flake8`: `max-line-length = 88`, `extend-ignore = E501`, `ignore = E203, W503, G004, G200, E402`; `exclude` covers `.venv` and the JS/TS file globs.
 
-Frontend: `npm run lint` / `npm run lint:fix` (eslint) in `src/App`.
+Frontend: `npm run lint` / `npm run lint:fix` (eslint) in `src/App`, gated in CI by `.github/workflows/frontend-lint.yml`. The gate is on **errors only** — eslint exits zero on warnings, and the codebase deliberately carries ~147 warnings (mostly `no-explicit-any`). Don't add `--max-warnings=0` until that backlog is cleared.
 
 ## Architecture
 
@@ -111,4 +111,4 @@ Note `src/App/Dockerfile` installs from `requirements.txt` when that file is pre
 - Backend imports assume both `src/` and `src/backend/` are on `sys.path`. Set `PYTHONPATH=src:src/backend` when running anything from the repo root.
 - Read all runtime configuration through the `config` object in `common/config/app_config.py` rather than touching `os.environ` directly.
 - User-facing input and uploaded team configs must pass RAI content-safety checks — see the helpers in `common/utils/team_utils.py` and their use in `api/router.py`.
-- Each service owns its own dependency set. A package pinned in one `pyproject.toml` is frequently at a different version in another, and `.github/requirements.txt` is a fourth, separate set used only by CI — check the specific manifest you are changing rather than assuming repo-wide consistency.
+- Each service owns its own dependency set. A package pinned in one `pyproject.toml` is frequently at a different version in another, and `.github/requirements.txt` is a fourth, separate set used only by CI — check the specific manifest you are changing rather than assuming repo-wide consistency. An advisory CI job (`.github/workflows/version-drift.yml`) reports cross-manifest version drift on PRs that touch a manifest; it never fails the build, but read its report before applying a security bump to only one manifest — drift is exactly how one copy of a package gets hardened while the others stay vulnerable.
