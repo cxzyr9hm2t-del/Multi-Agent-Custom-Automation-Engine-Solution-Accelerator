@@ -156,10 +156,12 @@ class WebSocketService {
     }
 
     on(eventType: string, callback: (message: StreamMessage) => void): () => void {
-        if (!this.listeners.has(eventType)) {
-            this.listeners.set(eventType, new Set());
+        let setRef = this.listeners.get(eventType);
+        if (!setRef) {
+            setRef = new Set();
+            this.listeners.set(eventType, setRef);
         }
-        this.listeners.get(eventType)!.add(callback);
+        setRef.add(callback);
         return () => {
             const setRef = this.listeners.get(eventType);
             if (setRef) {
@@ -179,37 +181,37 @@ class WebSocketService {
 
     onConnectionChange(callback: (connected: boolean) => void): () => void {
         return this.on('connection_status', (message: StreamMessage) => {
-            callback(message.data?.connected || false);
+            callback((message.data as { connected?: boolean } | undefined)?.connected || false);
         });
     }
 
     onStreamingMessage(callback: (message: StreamingPlanUpdate) => void): () => void {
         return this.on(WebsocketMessageType.AGENT_MESSAGE, (message: StreamMessage) => {
-            if (message.data) callback(message.data);
+            if (message.data) callback(message.data as StreamingPlanUpdate);
         });
     }
 
     onPlanApprovalRequest(callback: (approvalRequest: ParsedPlanApprovalRequest) => void): () => void {
         return this.on(WebsocketMessageType.PLAN_APPROVAL_REQUEST, (message: StreamMessage) => {
-            if (message.data) callback(message.data);
+            if (message.data) callback(message.data as ParsedPlanApprovalRequest);
         });
     }
 
-    onPlanApprovalResponse(callback: (response: any) => void): () => void {
+    onPlanApprovalResponse(callback: (response: unknown) => void): () => void {
         return this.on(WebsocketMessageType.PLAN_APPROVAL_RESPONSE, (message: StreamMessage) => {
             if (message.data) callback(message.data);
         });
     }
 
-    onErrorMessage(callback: (data: any) => void): () => void {
+    onErrorMessage(callback: (data: unknown) => void): () => void {
         return this.on(WebsocketMessageType.ERROR_MESSAGE, (message: StreamMessage) => {
             callback(message.data);
         });
     }
 
-    private emit(eventType: string, data: any): void {
+    private emit(eventType: string, data: unknown): void {
         const message: StreamMessage = {
-            type: eventType as any,
+            type: eventType as WebsocketMessageType,
             data,
             timestamp: new Date().toISOString()
         };
@@ -231,7 +233,7 @@ class WebSocketService {
                         type: WebsocketMessageType.PLAN_APPROVAL_REQUEST,
                         plan_id: parsedData.id,
                         parsedData,
-                        rawData: message.data
+                        rawData: message.data as string
                     };
                     this.emit(WebsocketMessageType.PLAN_APPROVAL_REQUEST, structuredMessage);
                 } else {
@@ -339,7 +341,7 @@ class WebSocketService {
         return this.ws?.readyState === WebSocket.OPEN;
     }
 
-    send(message: any): void {
+    send(message: unknown): void {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify(message));
         } else {

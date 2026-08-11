@@ -38,7 +38,7 @@ const PanelRightToggles: React.FC<PanelRightTogglesProps> = ({ children }) => {
     };
 
     const handlePanelInit = ({ panelType, isActive }: { panelType: string; isActive: boolean }) => {
-      if (isActive) setActivePanel(panelType as any);
+      if (isActive) setActivePanel(panelType as typeof panelTypes[number]);
     };
 
     eventBus.on("setActivePanel", handlePanelToggle);

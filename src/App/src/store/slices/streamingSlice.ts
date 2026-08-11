@@ -25,10 +25,10 @@ const streamingSlice = createSlice({
     initialState,
     reducers: {
         setStreamingMessages(state, action: PayloadAction<StreamingPlanUpdate[]>) {
-            state.streamingMessages = action.payload as any;
+            state.streamingMessages = action.payload;
         },
         addStreamingMessage(state, action: PayloadAction<StreamingPlanUpdate>) {
-            state.streamingMessages.push(action.payload as any);
+            state.streamingMessages.push(action.payload);
         },
         setStreamingMessageBuffer(state, action: PayloadAction<string>) {
             state.streamingMessageBuffer = action.payload;

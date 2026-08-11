@@ -167,7 +167,7 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                                     rehypePlugins={[rehypePrism]}
                                     urlTransform={resolveApiAssetUrl}
                                     components={{
-                                        a: ({ node, ...props }) => (
+                                        a: ({ node: _node, ...props }) => (
                                             <a
                                                 {...props}
                                                 style={{
@@ -183,11 +183,11 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                                                     />
                                                 ),
  
-                                                p: ({ node, ...props }) => (
+                                                p: ({ node: _node, ...props }) => (
                                                     <p {...props} style={{ margin: '0 0 8px 0' }} />
                                                 ),
  
-                                        img: ({ node, ...props }) => (
+                                        img: ({ node: _node, ...props }) => (
                                             <img
                                                 {...props}
                                                 style={{
@@ -221,7 +221,7 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                             rehypePlugins={[rehypePrism]}
                             urlTransform={resolveApiAssetUrl}
                             components={{
-                                        a: ({ node, ...props }) => (
+                                        a: ({ node: _node, ...props }) => (
                                             <a
                                                 {...props}
                                                 style={{
@@ -237,7 +237,7 @@ const StreamingBufferMessage: React.FC<StreamingBufferMessageProps> = ({
                                             />
                                         ),
  
-                                        img: ({ node, ...props }) => (
+                                        img: ({ node: _node, ...props }) => (
                                             <img
                                                 {...props}
                                                 style={{

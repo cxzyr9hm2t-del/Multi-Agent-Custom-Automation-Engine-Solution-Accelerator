@@ -21,7 +21,7 @@ const humanizeKey = (key: string): string => {
  * Render a parsed JSON value as readable Markdown (bullet list of
  * "**Key**: value" entries, recursing into nested objects/arrays).
  */
-export const jsonToMarkdown = (value: any, depth = 0): string => {
+export const jsonToMarkdown = (value: unknown, depth = 0): string => {
     const indent = '  '.repeat(depth);
 
     if (value === null || value === undefined) return `${indent}_n/a_`;
@@ -207,7 +207,7 @@ const normalizePythonDict = (input: string): string => {
     return out.replace(/,(\s*[\]}])/g, '$1');
 };
 
-const tryParseJson = (block: string): any | null => {
+const tryParseJson = (block: string): unknown => {
     const trimmed = block.trim();
     if (!trimmed) return null;
     // Strict JSON first

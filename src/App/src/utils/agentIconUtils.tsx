@@ -25,7 +25,39 @@ import { TaskService } from '@/store';
 import { iconMap } from '@/models/homeInput';
 
 // Extended icon mapping for user-uploaded string icons
-const fluentIconMap: Record<string, React.ComponentType<any>> = {
+/** Minimal structural view of a team agent, as used for icon selection. */
+export interface IconAgentLike {
+    name?: string;
+    type?: string;
+    input_key?: string;
+    icon?: string;
+}
+
+/** Minimal structural view of planData, whose `team` holds an agent roster. */
+export interface TeamCarrier {
+    team?: { agents?: IconAgentLike[] } | null;
+}
+
+/**
+ * Minimal structural view of planApprovalRequest. Note its `team` is a list of
+ * agent *names*, not the roster object planData carries — the two shapes differ,
+ * which the previous `any` annotations obscured.
+ */
+export interface ApprovalContextCarrier {
+    team?: string[];
+    context?: {
+        // MPlanData declares this as Record<string, string>, but the code below reads
+        // `.icon` off each value. If the declared type is right, that read is always
+        // undefined and the branch is dead. Typed as `unknown` and cast at the read so
+        // runtime behaviour is unchanged while the mismatch stays visible.
+        participant_descriptions?: Record<string, unknown>;
+    };
+}
+
+/** Icon components here accept an optional style and nothing else is read. */
+type IconComponent = React.ComponentType<{ style?: React.CSSProperties }>;
+
+const fluentIconMap: Record<string, IconComponent> = {
     'Desktop20Regular': Desktop20Regular,
     'Code20Regular': Code20Regular,
     'Building20Regular': Building20Regular,
@@ -93,7 +125,7 @@ const AGENT_ICON_POOL = [
 ];
 
 // Cache for agent icon assignments to ensure consistency
-const agentIconAssignments: Record<string, React.ComponentType<any>> = {};
+const agentIconAssignments: Record<string, IconComponent> = {};
 
 /**
  * Generate a consistent hash from a string for icon assignment
@@ -111,7 +143,7 @@ const generateHash = (str: string): number => {
 /**
  * Match user-uploaded string icon to Fluent UI component
  */
-const matchStringToFluentIcon = (iconString: string): React.ComponentType<any> | null => {
+const matchStringToFluentIcon = (iconString: string): IconComponent | null => {
     if (!iconString || typeof iconString !== 'string') return null;
 
     // Try exact match first
@@ -146,7 +178,7 @@ const matchStringToFluentIcon = (iconString: string): React.ComponentType<any> |
  * Get deterministic icon for agent based on name pattern matching
  * This ensures agents with the same name always get the same icon
  */
-const getDeterministicAgentIcon = (cleanName: string): React.ComponentType<any> => {
+const getDeterministicAgentIcon = (cleanName: string): IconComponent => {
     // Pattern-based assignment - deterministic based on agent name
     if (cleanName.includes('data') && cleanName.includes('order')) {
         return TableSimple20Regular;
@@ -223,8 +255,8 @@ const getUniqueAgentIcon = (
  */
 export const getAgentIcon = (
     agentName: string,
-    planData?: any,
-    planApprovalRequest?: any,
+    planData?: TeamCarrier | null,
+    planApprovalRequest?: ApprovalContextCarrier | null,
     iconColor = 'var(--colorNeutralForeground2)'
 ): React.ReactNode => {
     const iconStyle = { fontSize: '16px', color: iconColor };
@@ -233,7 +265,7 @@ export const getAgentIcon = (
     if (planData?.team?.agents) {
         const cleanAgentName = TaskService.cleanTextToSpaces(agentName);
 
-        const agent = planData.team.agents.find((a: any) =>
+        const agent = planData.team.agents.find((a: IconAgentLike) =>
             TaskService.cleanTextToSpaces(a.name || '').toLowerCase().includes(cleanAgentName.toLowerCase()) ||
             TaskService.cleanTextToSpaces(a.type || '').toLowerCase().includes(cleanAgentName.toLowerCase()) ||
             TaskService.cleanTextToSpaces(a.input_key || '').toLowerCase().includes(cleanAgentName.toLowerCase())
@@ -275,7 +307,8 @@ export const getAgentIcon = (
 
     // 3. Third priority: Get from participant_descriptions in planApprovalRequest
     if (planApprovalRequest?.context?.participant_descriptions) {
-        const participantDesc = planApprovalRequest.context.participant_descriptions[agentName];
+        const participantDesc = planApprovalRequest.context.participant_descriptions[agentName] as
+            { icon?: string } | undefined;
         if (participantDesc?.icon && iconMap[participantDesc.icon]) {
             return React.cloneElement(iconMap[participantDesc.icon] as React.ReactElement, {
                 style: iconStyle
@@ -290,7 +323,7 @@ export const getAgentIcon = (
     if (planApprovalRequest?.team) {
         allAgentNames = planApprovalRequest.team;
     } else if (planData?.team?.agents) {
-        allAgentNames = planData.team.agents.map((a: any) => a.name || a.type || '');
+        allAgentNames = planData.team.agents.map((a: IconAgentLike) => a.name || a.type || '');
     } else if (storedTeam?.agents) {
         allAgentNames = storedTeam.agents.map(a => a.name);
     }
@@ -361,8 +394,8 @@ export const getAgentDisplayNameWithSuffix = (agentName: string): string => {
 export const getStyledAgentIcon = (
     agentName: string,
     customStyle: React.CSSProperties,
-    planData?: any,
-    planApprovalRequest?: any
+    planData?: TeamCarrier | null,
+    planApprovalRequest?: ApprovalContextCarrier | null
 ): React.ReactNode => {
     const icon = getAgentIcon(agentName, planData, planApprovalRequest);
 
@@ -370,11 +403,11 @@ export const getStyledAgentIcon = (
         try {
             // Safely merge styles
             const mergedStyle = {
-                ...(icon.props as any)?.style,
+                ...(icon.props as { style?: React.CSSProperties })?.style,
                 ...customStyle
             };
 
-            return React.cloneElement(icon as React.ReactElement<any>, {
+            return React.cloneElement(icon as React.ReactElement<{ style?: React.CSSProperties }>, {
                 style: mergedStyle
             });
         } catch (error) {

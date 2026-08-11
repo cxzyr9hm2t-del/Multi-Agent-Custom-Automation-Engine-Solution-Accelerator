@@ -194,8 +194,7 @@ export class TaskService {
 
     try {
       return await apiService.createPlan(inputTask);
-    } catch (error: any) {
-
+    } catch {
       // You can customize this logic as needed
       const message = "Unable to create plan. Please try again.";
 

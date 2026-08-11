@@ -5,7 +5,7 @@ import { UserInfo, claim } from "@/models";
 
 declare global {
     interface Window {
-        appConfig?: Record<string, any>;
+        appConfig?: Record<string, unknown>;
         activeUserId?: string;
         userInfo?: UserInfo;
     }
@@ -31,10 +31,10 @@ export function setUserInfoGlobal(userInfo: UserInfo | null) {
         USER_INFO = userInfo;
     }
 }
-export function setEnvData(configData: Record<string, any>) {
+export function setEnvData(configData: Record<string, unknown>) {
     if (configData) {
-        config.API_URL = configData.API_URL || "";
-        config.ENABLE_AUTH = configData.ENABLE_AUTH || false;
+        config.API_URL = (configData.API_URL as string) || "";
+        config.ENABLE_AUTH = (configData.ENABLE_AUTH as boolean) || false;
     }
 }
 
@@ -74,7 +74,7 @@ export function getApiUrl() {
     if (!API_URL) {
         // Check if window.appConfig exists
         if (window.appConfig && window.appConfig.API_URL) {
-            setApiUrl(window.appConfig.API_URL);
+            setApiUrl(window.appConfig.API_URL as string);
         }
     }
 
@@ -130,7 +130,7 @@ export function getUserId(): string {
     return userId;
 }
 
-export const toBoolean = (value: any): boolean => {
+export const toBoolean = (value: unknown): boolean => {
     if (typeof value !== 'string') {
         return false;
     }

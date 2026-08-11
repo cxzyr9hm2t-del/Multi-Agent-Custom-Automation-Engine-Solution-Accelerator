@@ -1,5 +1,25 @@
+import { ApiError } from '@/models';
 import { TeamConfig } from '../models/Team';
 import { apiClient } from '../api/apiClient';
+
+/**
+ * Validation failure returned by the team-config upload endpoint. The three
+ * variants (RAI, search-index, model) share one shape; callers currently only
+ * test them for presence.
+ */
+export interface TeamValidationError {
+    error_type: string;
+    message: string;
+    description: string;
+}
+
+/** Wire shape of GET /v4/init_team. */
+export interface InitTeamResponse {
+    status: string;
+    team_id?: string;
+    team?: TeamConfig;
+    requires_team_upload?: boolean;
+}
 
 export class TeamService {
     /**
@@ -25,16 +45,11 @@ export class TeamService {
      */
     static async initializeTeam(team_switched = false): Promise<{
         success: boolean;
-        data?: {
-            status: string;
-            team_id?: string;
-            team?: any;
-            requires_team_upload?: boolean;
-        };
+        data?: InitTeamResponse;
         error?: string;
     }> {
         try {
-            const response = await apiClient.get('/v4/init_team', {
+            const response = await apiClient.get<InitTeamResponse>('/v4/init_team', {
                 params: {
                     team_switched
                 }
@@ -44,7 +59,8 @@ export class TeamService {
                 success: true,
                 data: response
             };
-        } catch (error: any) {
+        } catch (caught) {
+            const error = caught as ApiError;
             let errorMessage = 'Failed to initialize team';
 
             if (error.response?.data?.detail) {
@@ -85,18 +101,24 @@ export class TeamService {
     }
 
     static async uploadCustomTeam(teamFile: File): Promise<{
-        modelError?: any; success: boolean; team?: TeamConfig; error?: string; raiError?: any; searchError?: any
+        modelError?: TeamValidationError;
+        success: boolean;
+        team?: TeamConfig;
+        error?: string;
+        raiError?: TeamValidationError;
+        searchError?: TeamValidationError;
     }> {
         try {
             const formData = new FormData();
             formData.append('file', teamFile);
-            const response = await apiClient.upload('/v4/upload_team_config', formData);
+            const response = await apiClient.upload<{ team?: TeamConfig }>('/v4/upload_team_config', formData);
 
             return {
                 success: true,
                 team: response.team
             };
-        } catch (error: any) {
+        } catch (caught) {
+            const error = caught as ApiError;
 
             // Check if this is an RAI validation error
             const errorDetail = error.response?.data?.detail || error.response?.data;
@@ -184,7 +206,7 @@ export class TeamService {
      */
     static async selectTeam(teamId: string): Promise<{
         success: boolean;
-        data?: any;
+        data?: unknown;
         error?: string;
     }> {
         try {
@@ -196,7 +218,8 @@ export class TeamService {
                 success: true,
                 data: response
             };
-        } catch (error: any) {
+        } catch (caught) {
+            const error = caught as ApiError;
             let errorMessage = 'Failed to select team';
 
             if (error.response?.data?.detail) {
@@ -215,9 +238,13 @@ export class TeamService {
     /**
      * Validate a team configuration JSON structure
      */
-    static validateTeamConfig(config: any): { isValid: boolean; errors: string[]; warnings: string[] } {
+    static validateTeamConfig(configInput: unknown): { isValid: boolean; errors: string[]; warnings: string[] } {
         const errors: string[] = [];
         const warnings: string[] = [];
+
+        // Validated field by field below; the cast only makes the property reads
+        // expressible and is erased at compile time.
+        const config = configInput as Record<string, unknown>;
 
         // Required fields validation
         const requiredFields = ['id', 'team_id', 'name', 'description', 'status', 'created', 'created_by', 'agents'];
@@ -228,13 +255,13 @@ export class TeamService {
         }
 
         // Status validation
-        if (config.status && !['visible', 'hidden'].includes(config.status)) {
+        if (config.status && !['visible', 'hidden'].includes(config.status as string)) {
             errors.push('Status must be either "visible" or "hidden"');
         }
 
         // Agents validation
         if (config.agents && Array.isArray(config.agents)) {
-            config.agents.forEach((agent: any, index: number) => {
+            (config.agents as Record<string, unknown>[]).forEach((agent, index: number) => {
                 const agentRequiredFields = ['input_key', 'type', 'name'];
                 for (const field of agentRequiredFields) {
                     if (!agent[field]) {
@@ -268,7 +295,7 @@ export class TeamService {
 
         // Starting tasks validation
         if (config.starting_tasks && Array.isArray(config.starting_tasks)) {
-            config.starting_tasks.forEach((task: any, index: number) => {
+            (config.starting_tasks as Record<string, unknown>[]).forEach((task, index: number) => {
                 const taskRequiredFields = ['id', 'name', 'prompt'];
                 for (const field of taskRequiredFields) {
                     if (!task[field]) {

@@ -25,9 +25,6 @@ import {
 } from '@/store/slices/streamingSlice';
 import { setWsConnected } from '@/store/slices/appSlice';
 
-/** Return type of dispatch(createAsyncThunk()) — has .abort() */
-type ThunkPromise = ReturnType<typeof fetchPlanData> extends (...args: any[]) => infer R ? R : never;
-
 export function usePlanActions() {
     const dispatch = useAppDispatch();
     /** Ref holding the in-flight thunk promise so we can abort it */

@@ -5,7 +5,6 @@ import { Button } from "@fluentui/react-components";
 import { Send } from "@/commonComponents/imports/bundleicons";
 
 interface SimplifiedPlanChatProps extends PlanChatProps {
-    planData: any;
     input: string;
     setInput: (input: string) => void;
     submittingChatDisableInput: boolean;
@@ -14,12 +13,10 @@ interface SimplifiedPlanChatProps extends PlanChatProps {
 }
 
 const PlanChatBody: React.FC<SimplifiedPlanChatProps> = ({
-    planData,
     input,
     setInput,
     submittingChatDisableInput,
     OnChatSubmit,
-    waitingForPlan
 }) => {
     return (
         <div

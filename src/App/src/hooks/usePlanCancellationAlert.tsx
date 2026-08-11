@@ -1,10 +1,18 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { PlanStatus } from '../models';
 import { APIService } from '../api/apiService';
 
+/** The slice of plan data this hook reads when deciding whether to warn. */
+interface CancellablePlanData {
+  plan?: {
+    id?: string;
+    overall_status?: PlanStatus;
+  };
+}
+
 interface UsePlanCancellationAlertProps {
-  planData: any;
-  planApprovalRequest: any;
+  planData: CancellablePlanData | null;
+  planApprovalRequest: { id?: string } | null;
   onNavigate: () => void;
 }
 
@@ -16,7 +24,9 @@ export const usePlanCancellationAlert = ({
   planApprovalRequest,
   onNavigate
 }: UsePlanCancellationAlertProps) => {
-  const apiService = new APIService();
+  // Memoised: constructing this inline made it a new object every render, which
+  // changed the useCallback dependency below on every render and defeated the memo.
+  const apiService = useMemo(() => new APIService(), []);
 
   /**
    * Check if a plan is currently active/running
@@ -50,7 +60,9 @@ export const usePlanCancellationAlert = ({
       if (planApprovalRequest?.id) {
         await apiService.approvePlan({
           m_plan_id: planApprovalRequest.id,
-          plan_id: planData?.plan?.id,
+          // Cast preserves today's behaviour: this was `any`, so plan_id could already
+          // be undefined here at runtime. Narrowing it would change what gets sent.
+          plan_id: planData?.plan?.id as string,
           approved: false,
           feedback: 'Plan cancelled by user navigation'
         });

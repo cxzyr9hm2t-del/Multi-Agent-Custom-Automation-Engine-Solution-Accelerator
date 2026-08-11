@@ -1,3 +1,5 @@
+import { StartingTask } from '@/models/Team';
+import { ApiError } from '@/models';
 import {
   Body1Strong,
   Button,
@@ -115,7 +117,8 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
           showToast("Failed to create plan", "error");
           dismissToast(id);
         }
-      } catch (error: any) {
+      } catch (caught) {
+          const error = caught as ApiError;
         let errorMessage = "Unable to create plan. Please try again.";
         dismissToast(id);
         // Check if this is an RAI validation error
@@ -163,7 +166,7 @@ const HomeInput: React.FC<HomeInputProps> = ({ selectedTeam }) => {
             };
           } else {
             // Handle StartingTask objects
-            const startingTask = task as any; // Type assertion for now
+            const startingTask = task as StartingTask;
             const taskDescription =
               startingTask.prompt || startingTask.name || "Task description";
             return {

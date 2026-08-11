@@ -49,6 +49,9 @@ const AppWrapper = () => {
     };
     
     initConfig(); // Call the async function inside useEffect
+    // Intentionally mount-only: this bootstraps `config` once at startup. Adding it
+    // as a dependency would re-run initialisation every time the value it sets changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Effect to listen for changes in the user's preferred color scheme
   useEffect(() => {
@@ -64,6 +67,10 @@ const AppWrapper = () => {
 
     mediaQuery.addEventListener("change", handleThemeChange);
     return () => mediaQuery.removeEventListener("change", handleThemeChange);
+    // Intentionally mount-only: `isDarkMode` is read once to apply the initial class.
+    // Thereafter the media-query listener drives it, so adding the dependency would
+    // only tear down and re-register that listener on every theme change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   if (!isConfigLoaded || !isUserInfoLoaded) return <div>Loading...</div>;
   return (

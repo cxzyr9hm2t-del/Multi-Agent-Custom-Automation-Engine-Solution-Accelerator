@@ -6,15 +6,9 @@ import rehypePrism from "rehype-prism";
 import { Body1, Tag, makeStyles, tokens, Button } from "@fluentui/react-components";
 import { TaskService } from "@/store";
 import { PersonRegular, ArrowDownloadRegular } from "@fluentui/react-icons";
-import { getAgentIcon, getAgentDisplayName } from '@/utils/agentIconUtils';
+import { getAgentIcon, getAgentDisplayName, TeamCarrier, ApprovalContextCarrier } from '@/utils/agentIconUtils';
 import { formatJsonInText } from '@/utils/jsonFormatter';
 import { resolveApiAssetUrl } from "@/api/config";
-
-interface StreamingAgentMessageProps {
-  agentMessages: AgentMessageData[];
-  planData?: any;
-  planApprovalRequest?: any;
-}
 
 const useStyles = makeStyles({
   container: {
@@ -137,23 +131,27 @@ const isClarificationMessage = (content: string): boolean => {
   return clarificationKeywords.some(keyword => lowerContent.includes(keyword));
 };
 
-// NOTE (rules-of-hooks): this is a lowercase function that calls hooks, and it is
-// invoked as a plain call from PlanChat.tsx rather than rendered as <Component />.
-// Its hooks therefore execute inside PlanChat's hook list. That is safe *today*
-// only because PlanChat calls it unconditionally and in a fixed order; making the
-// call conditional would corrupt hook order at runtime.
-// TODO: promote to a real component. Deferred deliberately — doing so changes
-// React reconciliation and the lifetime of the state below, and there are no
-// frontend tests to catch a regression.
-const renderAgentMessages = (
-  agentMessages: AgentMessageData[], 
-  planData?: any, 
-  planApprovalRequest?: any,
-  finalResultRef?: React.RefObject<HTMLDivElement>
-) => {
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+// This is a real component rather than a plain `render*` helper. As a helper it
+// called useStyles directly into its caller's hook list, which put that hook below
+// PlanChat's `if (!planData) return ...` early return — an unreachable path today,
+// but one that would corrupt hook order the moment a caller stopped guarding.
+// Rendered as <AgentMessages />, the hook belongs to this component's own instance
+// and the caller's control flow no longer matters.
+interface AgentMessagesProps {
+  agentMessages: AgentMessageData[];
+  planData?: TeamCarrier | null;
+  planApprovalRequest?: ApprovalContextCarrier | null;
+  finalResultRef?: React.RefObject<HTMLDivElement>;
+}
+
+const AgentMessages: React.FC<AgentMessagesProps> = ({
+  agentMessages,
+  planData,
+  planApprovalRequest,
+  finalResultRef
+}) => {
   const styles = useStyles();
-  
+
   if (!agentMessages?.length) return null;
 
   // Filter out messages with empty content
@@ -329,4 +327,4 @@ const renderAgentMessages = (
   );
 };
 
-export default renderAgentMessages;
+export default AgentMessages;

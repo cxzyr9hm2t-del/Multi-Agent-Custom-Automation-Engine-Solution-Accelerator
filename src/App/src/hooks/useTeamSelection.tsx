@@ -1,10 +1,11 @@
+import { ApiError } from '@/models';
 import { useState, useCallback } from 'react';
 import { TeamConfig } from '../models/Team';
 import { TeamService } from '../store/TeamService';
 
 interface UseTeamSelectionProps {
   sessionId?: string;
-  onTeamSelected?: (team: TeamConfig, result: any) => void;
+  onTeamSelected?: (team: TeamConfig, result: unknown) => void;
   onError?: (error: string) => void;
 }
 
@@ -21,7 +22,6 @@ interface UseTeamSelectionReturn {
  * React hook for managing team selection with backend integration
  */
 export const useTeamSelection = ({
-  sessionId,
   onTeamSelected,
   onError,
 }: UseTeamSelectionProps = {}): UseTeamSelectionReturn => {
@@ -54,7 +54,8 @@ export const useTeamSelection = ({
 
         return false;
       }
-    } catch (err: any) {
+    } catch (caught) {
+        const err = caught as ApiError;
       const errorMessage = err.message || 'Failed to select team';
       setError(errorMessage);
 
@@ -65,7 +66,7 @@ export const useTeamSelection = ({
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, sessionId, onTeamSelected, onError]);
+  }, [isLoading, onTeamSelected, onError]);
 
   const clearSelection = useCallback(() => {
     setSelectedTeam(null);
