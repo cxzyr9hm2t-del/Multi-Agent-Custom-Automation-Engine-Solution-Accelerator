@@ -30,8 +30,9 @@ dependencies = [
   "werkzeug==3.1.8",
   "urllib3==2.7.0",
   "azure-core==1.40.0",
-  # Security: GHSA-537c-gmf6-5ccf (vulnerable bundled OpenSSL in manylinux wheels).
-  "cryptography==48.0.1",
+  # Security: GHSA-g6cj-pr64-35w5 and GHSA-jwv3-5hgf-82ww require 50.0.0 / 49.0.0;
+  # 50.0.0 also covers the earlier GHSA-537c-gmf6-5ccf.
+  "cryptography==50.0.0",
   "authlib==1.6.12",
   "azure-storage-blob==12.25.1",
 
