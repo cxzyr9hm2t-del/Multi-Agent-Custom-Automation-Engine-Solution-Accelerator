@@ -6,7 +6,11 @@ solution accelerator are documented here. The format is based on
 [Semantic Versioning](https://semver.org/) (`X.Y.Z-rc.N` pre-releases map to
 PEP 440 `X.Y.ZrcN` in the Python manifests).
 
-## [Unreleased]
+## [0.1.0] - 2026-08-13
+
+First stable release of this fork, promoting `0.1.0-rc.1` with the security
+remediation below applied on top. All service versions (backend, MCP server,
+frontend app and package) are set to `0.1.0`.
 
 ### Security
 
@@ -70,4 +74,5 @@ and completing the hardening work below.
 - Set all service versions (backend, MCP server, frontend app and package)
   to `0.1.0-rc.1`.
 
+[0.1.0]: https://github.com/cxzyr9hm2t-del/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator/releases/tag/v0.1.0
 [0.1.0-rc.1]: https://github.com/cxzyr9hm2t-del/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator/releases/tag/v0.1.0-rc.1
