@@ -16,6 +16,10 @@ dynamic = ["version"]
 # Core runtime dependencies managed in this pyproject.toml
 dependencies = [
   "fastmcp==3.2.0",
+  # Security: fastmcp 3.2.0 allows any mcp >=1.24.0,<2.0, and the lock had
+  # resolved 1.27.2 — CVE-2026-59950 (WebSocket transport missing Host/Origin
+  # validation) is only fixed in 1.28.1. Pinned to match src/backend.
+  "mcp==1.28.1",
   # Security: 0.115.0 constrained starlette to <0.39.0, which held this surface
   # on starlette 0.38.6 with seven unpatched advisories (oldest: CVE-2024-47874).
   "fastapi==0.140.0",
@@ -23,7 +27,9 @@ dependencies = [
   "python-dotenv==1.2.2",
   # Aligned with src/backend — 1.19.0 was six minor versions behind on an auth library.
   "azure-identity==1.25.3",
-  "pydantic==2.11.7",
+  # mcp 1.28.1 requires pydantic>=2.12 on Python >=3.14; 2.13.4 matches what
+  # src/backend and src/App resolve, keeping the three manifests drift-free.
+  "pydantic==2.13.4",
   "pydantic-settings==2.6.1",
   "python-multipart==0.0.32",
   "httpx==0.28.1",

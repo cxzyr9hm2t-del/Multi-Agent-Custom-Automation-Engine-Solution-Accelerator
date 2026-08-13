@@ -6,6 +6,23 @@ solution accelerator are documented here. The format is based on
 [Semantic Versioning](https://semver.org/) (`X.Y.Z-rc.N` pre-releases map to
 PEP 440 `X.Y.ZrcN` in the Python manifests).
 
+## [Unreleased]
+
+### Security
+
+- Remediated the three Dependabot alerts open against `v0.1.0-rc.1`:
+  - `mcp` 1.27.2 → 1.28.1 in the MCP server (CVE-2026-59950, WebSocket
+    transport missing Host/Origin validation), now pinned to match the
+    backend; `pydantic` moved 2.11.7 → 2.13.4 alongside it, aligning all
+    three services.
+  - `h2` 4.3.0 → 4.4.1 in the backend (CVE-2026-71554, request smuggling
+    via duplicate Host headers), held as a transitive security pin.
+  - `mem0ai` 1.0.11 → 2.0.18 in the backend (CVE-2026-7597, improper input
+    validation) via a uv dependency override — every `agent-framework-mem0`
+    release compatible with the pinned `agent-framework==1.6.0` caps
+    `mem0ai<2`, the backend does not use the mem0 integration, and the fix
+    only exists in 2.x.
+
 ## [0.1.0-rc.1] - 2026-08-13
 
 First release candidate of this fork, cut from `main` after syncing with
