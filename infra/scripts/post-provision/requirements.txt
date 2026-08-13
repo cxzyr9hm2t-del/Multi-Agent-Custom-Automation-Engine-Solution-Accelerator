@@ -10,6 +10,8 @@ azure-ai-projects==2.3.0
 # PyPDF2 is abandoned at 3.0.1 and permanently affected by CVE-2023-36464
 # (infinite loop in __parse_content_stream, reached via extract_text() in
 # index_datasets.py). The fix exists only in the renamed successor, pypdf.
-pypdf==6.14.2
+# 6.15.0 fixes GHSA-fp3f-mc75-235c and GHSA-fwg2-594c-jp42 (resource
+# exhaustion via large /ToUnicode streams and CID font width ranges).
+pypdf==6.15.0
 python-docx==1.2.0
 python-dotenv==1.2.2
