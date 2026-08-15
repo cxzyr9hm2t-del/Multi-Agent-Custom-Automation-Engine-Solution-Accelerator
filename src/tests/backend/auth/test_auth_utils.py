@@ -78,6 +78,38 @@ class TestGetAuthenticatedUserDetails:
             # Verify logging was called regardless
             mock_log.assert_called_once_with("No user principal found in headers")
     
+    def test_no_sample_user_fallback_outside_dev(self):
+        """Outside APP_ENV=dev, a missing principal yields no identity at all.
+
+        The sample user's all-zeros principal must never stand in for a real
+        one in a deployed environment, or every unauthenticated caller shares
+        a single anonymous account. Callers check for a falsy
+        user_principal_id and reject the request.
+        """
+        from backend.auth import auth_utils
+
+        headers = {"content-type": "application/json"}
+
+        with patch.object(auth_utils.config, "APP_ENV", "prod"):
+            result = auth_utils.get_authenticated_user_details(headers)
+
+        assert result["user_principal_id"] is None
+        assert result["user_name"] is None
+        assert result["auth_token"] is None
+        assert result["client_principal_b64"] is None
+
+    def test_sample_user_fallback_still_applies_in_dev(self):
+        """APP_ENV=dev keeps the local-development sample user."""
+        from backend.auth import auth_utils
+
+        headers = {"content-type": "application/json"}
+
+        with patch.object(auth_utils.config, "APP_ENV", "dev"):
+            result = auth_utils.get_authenticated_user_details(headers)
+
+        assert result["user_principal_id"] == "00000000-0000-0000-0000-000000000000"
+        assert result["user_name"] == "testusername@constoso.com"
+
     def test_with_partial_auth_headers(self):
         """Test behavior with only some authentication headers present."""
         partial_headers = {

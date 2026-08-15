@@ -116,12 +116,19 @@ else:
         "No Application Insights connection string found. Telemetry disabled."
     )
 
-# Add this near the top of your app.py, after initializing the app
+# Restrict CORS to the configured frontend origin.
+#
+# `allow_origins=["*"]` together with `allow_credentials=True` makes Starlette
+# reflect the caller's own Origin back when credentials are present, which lets
+# any site issue credentialed cross-origin requests and read the responses.
+# FRONTEND_SITE_NAME is the origin the frontend is actually served from; local
+# development sets it to "*" deliberately (see docs/LocalDevelopmentSetup.md),
+# which restores the permissive behaviour only for that case.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development; restrict in production
+    allow_origins=[frontend_url],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 

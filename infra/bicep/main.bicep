@@ -668,7 +668,12 @@ module mcp_container_app './modules/compute/container-app.bicep' = {
     location: solutionLocation
     tags: isCustom ? union(allTags, { 'azd-service-name': 'mcp' }) : allTags
     environmentResourceId: container_app_environment.outputs.resourceId
-    ingressExternal: true
+    // Internal ingress: the MCP server is reached only by the backend container,
+    // from inside this Container Apps environment (client-side MCPStreamableHTTPTool
+    // — see agents/agent_template.py). Nothing external consumes it, and it runs
+    // with ENABLE_AUTH=false, so public ingress would expose every domain tool
+    // unauthenticated.
+    ingressExternal: false
     ingressTargetPort: 9000
     managedIdentities: {
       userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId]

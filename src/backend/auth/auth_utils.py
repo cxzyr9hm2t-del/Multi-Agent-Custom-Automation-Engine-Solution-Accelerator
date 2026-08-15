@@ -2,6 +2,8 @@ import base64
 import json
 import logging
 
+from common.config.app_config import config
+
 
 def get_authenticated_user_details(request_headers):
     user_object = {}
@@ -9,10 +11,17 @@ def get_authenticated_user_details(request_headers):
     # check the headers for the Principal-Id (the guid of the signed in user)
     if "x-ms-client-principal-id" not in request_headers:
         logging.info("No user principal found in headers")
-        # if it's not, assume we're in development mode and return a default user
-        from . import sample_user
+        # Outside development, an absent principal means the request did not come
+        # through an authenticating front door. Fall through with no identity so
+        # callers reject it, rather than substituting the sample user — whose
+        # all-zeros principal would otherwise become a shared anonymous account
+        # that every unauthenticated caller lands in.
+        if config.APP_ENV != "dev":
+            raw_user_object = {}
+        else:
+            from . import sample_user
 
-        raw_user_object = sample_user.sample_user
+            raw_user_object = sample_user.sample_user
     else:
         # if it is, get the user details from the EasyAuth headers
         raw_user_object = {k: v for k, v in request_headers.items()}

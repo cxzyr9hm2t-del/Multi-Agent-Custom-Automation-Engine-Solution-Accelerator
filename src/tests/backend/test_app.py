@@ -267,18 +267,25 @@ class TestAppConfiguration:
         """Test that middleware stack is configured."""
         assert len(app.user_middleware) > 0
     
-    def test_cors_middleware_allows_all_origins(self):
-        """Test CORS middleware is configured to allow all origins."""
+    def test_cors_middleware_restricts_origins_to_frontend(self):
+        """CORS is scoped to FRONTEND_SITE_NAME, not a wildcard.
+
+        A wildcard origin combined with allow_credentials=True makes Starlette
+        reflect the caller's Origin back, which would let any site issue
+        credentialed cross-origin requests. The conftest sets FRONTEND_SITE_NAME
+        to http://localhost:3000, so that is the only origin expected here.
+        """
         from starlette.middleware.cors import CORSMiddleware
         cors_middleware = None
         for m in app.user_middleware:
             if hasattr(m, 'cls') and m.cls == CORSMiddleware:
                 cors_middleware = m
                 break
-        
+
         assert cors_middleware is not None
-        # Check that allow_origins includes "*" - using kwargs attribute
-        assert "*" in cors_middleware.kwargs.get('allow_origins', [])
+        origins = cors_middleware.kwargs.get('allow_origins', [])
+        assert origins == ['http://localhost:3000']
+        assert '*' not in origins
     
     def test_cors_middleware_allows_credentials(self):
         """Test CORS middleware allows credentials."""
