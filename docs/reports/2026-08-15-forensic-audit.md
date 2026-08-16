@@ -263,6 +263,10 @@ Added 2026-08-16, after the findings above were worked through. "Fixed" means
 the defect is closed and covered by a test; where that is not the whole story
 the note says so.
 
+The evidence behind this table — the commits, the re-run verification figures,
+and what could not be completed — is in
+[`2026-08-16-remediation-record.md`](2026-08-16-remediation-record.md).
+
 | # | Status | Note |
 |---|---|---|
 | C1 | **Partially fixed** | An opt-in Container Apps `authConfig` is wired through both flavours behind `backendAuthClientId`, empty by default. `auth_utils` now prefers the platform's `x-ms-client-principal` claims blob over the bare id header. It is not *enabled* by default — that needs an app registration, and enabling it has consequences documented in `docs/backend_api_authentication.md`. |
