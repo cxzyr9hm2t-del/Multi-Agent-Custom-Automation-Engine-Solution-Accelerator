@@ -359,7 +359,7 @@ class OrchestrationManager:
         5. Repeat until the workflow completes with no pending requests.
         """
         job_id = str(uuid.uuid4())
-        orchestration_config.set_approval_pending(job_id)
+        orchestration_config.set_approval_pending(job_id, user_id=user_id)
         self.logger.info(
             "Starting orchestration job '%s' for user '%s'", job_id, user_id
         )
@@ -939,8 +939,8 @@ class OrchestrationManager:
                 request_id, questions[:120],
             )
 
-            # Register pending clarification
-            orchestration_config.set_clarification_pending(request_id)
+            # Register pending clarification, owned by the user being asked
+            orchestration_config.set_clarification_pending(request_id, user_id=user_id)
 
             # Send to frontend via WebSocket
             await connection_config.send_status_update_async(

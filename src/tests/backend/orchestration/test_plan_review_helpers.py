@@ -381,7 +381,9 @@ class TestWaitForPlanApproval:
         assert result is not None
         assert result.approved is True
         assert result.m_plan_id == "plan-1"
-        orchestration_config.set_approval_pending.assert_called_with("plan-1")
+        orchestration_config.set_approval_pending.assert_called_with(
+            "plan-1", user_id="user-1"
+        )
         orchestration_config.wait_for_approval.assert_awaited_with("plan-1")
 
     @pytest.mark.asyncio

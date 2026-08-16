@@ -35,6 +35,14 @@ class OrchestrationConfig:
         self._approval_events: Dict[str, asyncio.Event] = {}
         self._clarification_events: Dict[str, asyncio.Event] = {}
 
+        # Who each pending request belongs to. Approvals and clarifications are
+        # keyed only by their own id, which is not secret — it travels to the
+        # browser over the WebSocket. Without an owner recorded alongside, any
+        # caller holding the id could answer on someone else's behalf and
+        # release their agent workflow.
+        self._approval_owners: Dict[str, str] = {}
+        self._clarification_owners: Dict[str, str] = {}
+
     def get_current_orchestration(self, user_id: str) -> Any:
         """Get existing orchestration workflow instance for user_id."""
         return self.orchestrations.get(user_id)
@@ -43,13 +51,19 @@ class OrchestrationConfig:
     # Approval helpers
     # ------------------------------------------------------------------ #
 
-    def set_approval_pending(self, plan_id: str) -> None:
-        """Mark approval pending and create/reset its event."""
+    def set_approval_pending(self, plan_id: str, user_id: Optional[str] = None) -> None:
+        """Mark approval pending, record its owner, and create/reset its event."""
         self.approvals[plan_id] = None
+        if user_id:
+            self._approval_owners[plan_id] = user_id
         if plan_id not in self._approval_events:
             self._approval_events[plan_id] = asyncio.Event()
         else:
             self._approval_events[plan_id].clear()
+
+    def approval_owner(self, plan_id: str) -> Optional[str]:
+        """Return the user a pending approval belongs to, or None if unrecorded."""
+        return self._approval_owners.get(plan_id)
 
     def set_approval_result(self, plan_id: str, approved: bool) -> None:
         """Set approval decision and trigger its event."""
@@ -97,21 +111,30 @@ class OrchestrationConfig:
                 self.cleanup_approval(plan_id)
 
     def cleanup_approval(self, plan_id: str) -> None:
-        """Remove approval tracking data and event."""
+        """Remove approval tracking data, owner and event."""
         self.approvals.pop(plan_id, None)
         self._approval_events.pop(plan_id, None)
+        self._approval_owners.pop(plan_id, None)
 
     # ------------------------------------------------------------------ #
     # Clarification helpers
     # ------------------------------------------------------------------ #
 
-    def set_clarification_pending(self, request_id: str) -> None:
-        """Mark clarification pending and create/reset its event."""
+    def set_clarification_pending(
+        self, request_id: str, user_id: Optional[str] = None
+    ) -> None:
+        """Mark clarification pending, record its owner, and create/reset its event."""
         self.clarifications[request_id] = None
+        if user_id:
+            self._clarification_owners[request_id] = user_id
         if request_id not in self._clarification_events:
             self._clarification_events[request_id] = asyncio.Event()
         else:
             self._clarification_events[request_id].clear()
+
+    def clarification_owner(self, request_id: str) -> Optional[str]:
+        """Return the user a pending clarification belongs to, or None if unrecorded."""
+        return self._clarification_owners.get(request_id)
 
     def set_clarification_result(self, request_id: str, answer: str) -> None:
         """Set clarification answer and trigger event."""
@@ -150,9 +173,10 @@ class OrchestrationConfig:
                 self.cleanup_clarification(request_id)
 
     def cleanup_clarification(self, request_id: str) -> None:
-        """Remove clarification tracking data and event."""
+        """Remove clarification tracking data, owner and event."""
         self.clarifications.pop(request_id, None)
         self._clarification_events.pop(request_id, None)
+        self._clarification_owners.pop(request_id, None)
 
 
 class ConnectionConfig:

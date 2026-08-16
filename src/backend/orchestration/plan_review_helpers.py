@@ -462,7 +462,7 @@ async def wait_for_plan_approval(
         logger.error("No plan ID provided for approval")
         return messages.PlanApprovalResponse(approved=False, m_plan_id=m_plan_id)
 
-    orchestration_config.set_approval_pending(m_plan_id)
+    orchestration_config.set_approval_pending(m_plan_id, user_id=user_id)
 
     try:
         approved = await orchestration_config.wait_for_approval(m_plan_id)

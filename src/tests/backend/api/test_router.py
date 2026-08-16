@@ -6,7 +6,6 @@ module level (never via sys.modules), so they do not pollute the shared
 interpreter state for other test files that import the same real modules.
 """
 
-import contextlib
 import os
 import sys
 from types import ModuleType, SimpleNamespace
@@ -139,6 +138,10 @@ def rt(monkeypatch):
     orchestration_config.set_approval_result = MagicMock()
     orchestration_config.set_clarification_result = MagicMock()
     orchestration_config.set_clarification_pending = MagicMock()
+    # Pending approvals and clarifications belong to the authenticated test user
+    # by default; individual tests override these to exercise a foreign caller.
+    orchestration_config.approval_owner = MagicMock(return_value="user-1")
+    orchestration_config.clarification_owner = MagicMock(return_value="user-1")
 
     team_config = MagicMock()
 
@@ -321,11 +324,35 @@ class TestPlanApproval:
         assert resp.status_code == 200
 
     def test_no_active_plan(self, rt):
-        # The 404 raised in the else-branch is caught by the surrounding
-        # `except Exception` block and surfaced as a 500 by the endpoint.
+        """An unknown m_plan_id is a 404 and reaches the client as one.
+
+        The surrounding `except Exception` used to swallow this and report a
+        500; deliberate status codes now re-raise ahead of the catch-all.
+        """
         rt.orchestration_config.approvals = {}
         resp = rt.client.post("/api/v4/plan_approval", json=self._payload())
-        assert resp.status_code == 500
+        assert resp.status_code == 404
+
+    def test_approval_by_non_owner_is_forbidden(self, rt):
+        """Holding a live m_plan_id is not authority to approve it.
+
+        The approval gate is the human-in-the-loop control: approving releases
+        the agent workflow to execute. A caller who is not the plan's owner must
+        not be able to do that, even with a valid pending id.
+        """
+        rt.orchestration_config.approvals = {"m-1": True}
+        rt.orchestration_config.approval_owner = MagicMock(return_value="someone-else")
+        resp = rt.client.post("/api/v4/plan_approval", json=self._payload())
+        assert resp.status_code == 403
+        rt.orchestration_config.set_approval_result.assert_not_called()
+
+    def test_approval_with_unrecorded_owner_is_forbidden(self, rt):
+        """An approval with no recorded owner cannot be verified, so it is denied."""
+        rt.orchestration_config.approvals = {"m-1": True}
+        rt.orchestration_config.approval_owner = MagicMock(return_value=None)
+        resp = rt.client.post("/api/v4/plan_approval", json=self._payload())
+        assert resp.status_code == 403
+        rt.orchestration_config.set_approval_result.assert_not_called()
 
     def test_plan_service_value_error(self, rt):
         rt.orchestration_config.approvals = {"m-1": True}
@@ -421,6 +448,23 @@ class TestUserClarification:
         rt.orchestration_config.clarifications = {}
         resp = rt.client.post("/api/v4/user_clarification", json=self._payload())
         assert resp.status_code == 404
+
+    def test_clarification_by_non_owner_is_forbidden(self, rt):
+        """Only the user a question was put to may answer it.
+
+        The request_id travels to the browser over the WebSocket, so possessing
+        one says nothing about who was asked. An answer feeds straight back into
+        the agent loop.
+        """
+        rt.store.get_team_by_id.return_value = MagicMock()
+        rt.rai_success.return_value = True
+        rt.orchestration_config.clarifications = {"r-1": True}
+        rt.orchestration_config.clarification_owner = MagicMock(
+            return_value="someone-else"
+        )
+        resp = rt.client.post("/api/v4/user_clarification", json=self._payload())
+        assert resp.status_code == 403
+        rt.orchestration_config.set_clarification_result.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -756,8 +800,34 @@ class TestWebSocket:
             ws.send_text("hello")
         rt.connection_config.add_connection.assert_called_once()
 
-    def test_connect_default_user(self, rt):
+    def test_connect_without_user_id_is_refused(self, rt):
+        """No identity, no socket — there is no anonymous default any more."""
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect("/api/v4/socket/proc-2"):
+                pass
+        rt.connection_config.add_connection.assert_not_called()
+
+    def test_connect_to_a_plan_you_do_not_own_is_refused(self, rt):
+        """The plan lookup is user-scoped, so a foreign plan_id does not resolve.
+
+        This socket streams the whole orchestration — agent reasoning, tool
+        calls, plan content, final result — so the handshake is refused rather
+        than accepted and then dropped.
+        """
         rt.store.get_plan_by_plan_id.return_value = None
-        with contextlib.suppress(Exception):
-            with rt.client.websocket_connect("/api/v4/socket/proc-2") as ws:
-                ws.close()
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect(
+                "/api/v4/socket/someone-elses-plan?user_id=user-1"
+            ):
+                pass
+        rt.connection_config.add_connection.assert_not_called()
+
+    def test_connect_is_refused_when_the_check_cannot_run(self, rt):
+        """An authorization check that errors has not passed — fail closed."""
+        rt.store.get_plan_by_plan_id.side_effect = RuntimeError("cosmos down")
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect(
+                "/api/v4/socket/proc-1?user_id=user-1"
+            ):
+                pass
+        rt.connection_config.add_connection.assert_not_called()

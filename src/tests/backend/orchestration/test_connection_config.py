@@ -71,6 +71,29 @@ class TestOrchestrationApproval:
         cfg.set_approval_pending("p1")  # existing -> clear
         assert not cfg._approval_events["p1"].is_set()
 
+    def test_approval_records_and_clears_its_owner(self):
+        """The owner is what makes an approval answerable by one user only."""
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="alice")
+        assert cfg.approval_owner("p1") == "alice"
+
+        cfg.cleanup_approval("p1")
+        assert cfg.approval_owner("p1") is None
+
+    def test_approval_owner_is_none_when_not_supplied(self):
+        """No owner recorded means unverifiable; callers must treat that as a denial."""
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1")
+        assert cfg.approval_owner("p1") is None
+
+    def test_clarification_records_and_clears_its_owner(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="alice")
+        assert cfg.clarification_owner("r1") == "alice"
+
+        cfg.cleanup_clarification("r1")
+        assert cfg.clarification_owner("r1") is None
+
     def test_set_approval_result_triggers_event(self):
         cfg = OrchestrationConfig()
         cfg.set_approval_pending("p1")

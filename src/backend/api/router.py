@@ -27,6 +27,10 @@ from services.team_service import TeamService
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# RFC 6455 close code for a message that violates policy — used here to refuse
+# a WebSocket handshake the caller is not authorized to make.
+WS_POLICY_VIOLATION = 1008
+
 app_router = APIRouter(
     prefix="/api/v4",
     responses={404: {"description": "Not found"}},
@@ -37,12 +41,48 @@ app_router = APIRouter(
 async def start_comms(
     websocket: WebSocket, process_id: str, user_id: str = Query(None)
 ):
-    """Web-Socket endpoint for real-time process status updates."""
+    """Web-Socket endpoint for real-time process status updates.
 
-    # Always accept the WebSocket connection first
+    This socket streams a plan's whole orchestration — agent reasoning, tool
+    calls, plan content and the final result — so it is authorized before it is
+    accepted. ``process_id`` is the plan id (see WebSocketService.buildSocketUrl
+    in the frontend), and the plan lookup is scoped to ``user_id``, so a plan the
+    caller does not own does not resolve and the handshake is refused.
+    """
+    # Authorize BEFORE accepting. Closing an un-accepted WebSocket fails the
+    # handshake outright rather than opening a stream and then dropping it.
+    if not user_id:
+        logging.info(
+            "[websocket] Refused connection to '%s': no user_id supplied", process_id
+        )
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return
+
+    try:
+        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        plan = await memory_store.get_plan_by_plan_id(plan_id=process_id)
+    except Exception as e:
+        # Fail closed: an authorization check that cannot run has not passed.
+        logging.error(
+            "[websocket] Refused connection to '%s': authorization check failed: %s",
+            process_id, e,
+        )
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return
+
+    if plan is None:
+        logging.warning(
+            "[websocket] Refused connection: user '%s' does not own plan '%s'",
+            user_id, process_id,
+        )
+        track_event_if_configured(
+            "Error_WebSocket_Forbidden",
+            {"process_id": process_id, "user_id": user_id},
+        )
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return
+
     await websocket.accept()
-
-    user_id = user_id or "00000000-0000-0000-0000-000000000000"
 
     # Manually create a span for WebSocket since excluded_urls suppresses auto-instrumentation.
     # Without this, all track_event_if_configured calls inside WebSocket would get operation_Id = 0.
@@ -51,17 +91,9 @@ async def start_comms(
         "WebSocket_Connection",
         attributes={"process_id": process_id, "user_id": user_id},
     ) as ws_span:
-        # Resolve session_id from plan for telemetry
-        session_id = None
-        try:
-            memory_store = await DatabaseFactory.get_database(user_id=user_id)
-            plan = await memory_store.get_plan_by_plan_id(plan_id=process_id)
-            if plan:
-                session_id = getattr(plan, 'session_id', None)
-                if session_id:
-                    ws_span.set_attribute("session_id", session_id)
-        except Exception as e:
-            logging.warning(f"[websocket] Failed to resolve session_id: {e}")
+        session_id = getattr(plan, 'session_id', None)
+        if session_id:
+            ws_span.set_attribute("session_id", session_id)
 
         # Add to the connection manager for backend updates
         connection_config.add_connection(
@@ -542,6 +574,30 @@ async def plan_approval(
                 orchestration_config
                 and human_feedback.m_plan_id in orchestration_config.approvals
             ):
+                # Membership in `approvals` proves the id is live, not that it
+                # belongs to the caller. Without this check any user holding a
+                # pending m_plan_id could approve someone else's plan and
+                # release their agent workflow to execute.
+                owner = orchestration_config.approval_owner(human_feedback.m_plan_id)
+                if owner != user_id:
+                    logger.warning(
+                        "Rejected approval of plan '%s' by user '%s' (owner: %s)",
+                        human_feedback.m_plan_id,
+                        user_id,
+                        owner if owner else "unrecorded",
+                    )
+                    track_event_if_configured(
+                        "Error_Plan_Approval_Forbidden",
+                        {
+                            "m_plan_id": human_feedback.m_plan_id,
+                            "user_id": user_id,
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail="This plan does not belong to you.",
+                    )
+
                 orchestration_config.set_approval_result(
                     human_feedback.m_plan_id, human_feedback.approved
                 )
@@ -606,6 +662,11 @@ async def plan_approval(
                 raise HTTPException(
                     status_code=404, detail="No active plan found for approval"
                 )
+    except HTTPException:
+        # Deliberate status codes (403 not yours, 404 no such pending plan) must
+        # reach the client as themselves. The catch-all below would otherwise
+        # turn every one of them into a 500.
+        raise
     except Exception as e:
         logging.error(f"Error processing plan approval: {e}")
         try:
@@ -651,8 +712,9 @@ async def clarification_ask(request: Request):
 
     request_id = str(uuid.uuid4())
 
-    # Register the pending clarification in orchestration state
-    orchestration_config.set_clarification_pending(request_id)
+    # Register the pending clarification in orchestration state, owned by the
+    # user being asked — only they may answer it.
+    orchestration_config.set_clarification_pending(request_id, user_id=user_id)
 
     # Send the question to the user's browser via WebSocket
     clarification_request = messages.UserClarificationRequest(
@@ -800,6 +862,30 @@ async def user_clarification(
             orchestration_config
             and human_feedback.request_id in orchestration_config.clarifications
         ):
+            # The request_id travels to the browser over the WebSocket, so
+            # holding one proves nothing about who the question was put to.
+            owner = orchestration_config.clarification_owner(
+                human_feedback.request_id
+            )
+            if owner != user_id:
+                logger.warning(
+                    "Rejected clarification '%s' by user '%s' (owner: %s)",
+                    human_feedback.request_id,
+                    user_id,
+                    owner if owner else "unrecorded",
+                )
+                track_event_if_configured(
+                    "Error_Clarification_Forbidden",
+                    {
+                        "request_id": human_feedback.request_id,
+                        "user_id": user_id,
+                    },
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="This clarification request does not belong to you.",
+                )
+
             # Use the new event-driven method to set clarification result
             orchestration_config.set_clarification_result(
                 human_feedback.request_id, human_feedback.answer
