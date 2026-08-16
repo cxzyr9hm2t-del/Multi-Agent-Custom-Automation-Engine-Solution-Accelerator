@@ -43,8 +43,6 @@ def build_agent_message_from_agent_message_response(
     Convert a messages.AgentMessageResponse into common.models.messages.AgentMessageData.
     This is defensive: it tolerates missing fields and different timestamp formats.
     """
-    # Robust timestamp parsing (accepts seconds or ms or missing)
-
     # Raw data serialization
     raw = getattr(agent_response, "raw_data", None)
     try:

@@ -13,6 +13,7 @@ import logging
 import re
 from typing import Optional
 
+from common.utils.utils_date import utc_now_iso
 import models.messages as messages
 from agent_framework_orchestrations._magentic import (
     ORCHESTRATOR_FINAL_ANSWER_PROMPT, ORCHESTRATOR_PROGRESS_LEDGER_PROMPT,
@@ -479,7 +480,7 @@ async def wait_for_plan_approval(
             timeout_type="approval",
             request_id=m_plan_id,
             message=f"Plan approval request timed out after {orchestration_config.default_timeout} seconds. Please try again.",
-            timestamp=asyncio.get_event_loop().time(),
+            timestamp=utc_now_iso(),
             timeout_duration=orchestration_config.default_timeout,
         )
 

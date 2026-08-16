@@ -18,6 +18,7 @@ if src_path not in sys.path:
 os.environ.setdefault('APP_ENV', 'dev')
 
 from backend.common.utils.resource_tokens import (  # noqa: E402
+    PURPOSE_CLARIFY,
     PURPOSE_IMAGE,
     PURPOSE_SOCKET,
     ResourceTokenError,
@@ -34,6 +35,38 @@ class TestRoundTrip:
     def test_subject_may_be_empty_for_a_non_resource_grant(self):
         token = mint(PURPOSE_IMAGE, "", "alice", 60)
         assert verify(token, PURPOSE_IMAGE, "") == "alice"
+
+    def test_a_clarify_token_verifies_and_returns_its_user(self):
+        token = mint(PURPOSE_CLARIFY, "", "alice", 60)
+        assert verify(token, PURPOSE_CLARIFY, "") == "alice"
+
+    def test_a_clarify_token_cannot_be_replayed_as_another_purpose(self):
+        """Permission to interrupt a user is not permission to read images."""
+        token = mint(PURPOSE_CLARIFY, "", "alice", 60)
+        with pytest.raises(ResourceTokenError):
+            verify(token, PURPOSE_IMAGE, "")
+
+    def test_another_purpose_cannot_be_replayed_as_a_clarify_token(self):
+        token = mint(PURPOSE_IMAGE, "", "alice", 60)
+        with pytest.raises(ResourceTokenError):
+            verify(token, PURPOSE_CLARIFY, "")
+
+    def test_a_clarify_token_cannot_be_edited_to_name_another_user(self):
+        """The core H3 property: the delivery target is sealed by the signature."""
+        import base64
+        import json
+
+        token = mint(PURPOSE_CLARIFY, "", "alice", 60)
+        encoded, signature = token.split(".", 1)
+        padded = encoded + "=" * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+        payload["u"] = "mallory"
+        forged = base64.urlsafe_b64encode(
+            json.dumps(payload, separators=(",", ":")).encode()
+        ).decode().rstrip("=")
+
+        with pytest.raises(ResourceTokenError):
+            verify(f"{forged}.{signature}", PURPOSE_CLARIFY, "")
 
     def test_minting_without_a_user_is_refused(self):
         with pytest.raises(ResourceTokenError):

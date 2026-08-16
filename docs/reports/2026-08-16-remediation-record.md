@@ -184,11 +184,8 @@ in place, so this is left for `pinact` or an equivalent run with network access.
   Container Apps auth configuration exist and default to off. Until it is turned
   on, every ownership check added by this work compares against a
   client-supplied identity. See `docs/backend_api_authentication.md`.
-- **H3's `/clarification/ask` is still unauthenticated.** The clarification can
-  no longer be answered by anyone but its owner, and outside dev it can no
-  longer be misdelivered — but a question can still be pushed into a user's UI.
-  The root cause is that `ask_user` takes its `user_id` from the model; the
-  durable fix is for the backend to supply it from the invoking orchestration.
+- ~~**H3's `/clarification/ask` is still unauthenticated.**~~ Closed on
+  2026-08-16 — see §6.
 - **M7 falls back for pre-existing images.** Images generated before ownership
   was recorded have no record and are served on a valid token alone, so existing
   conversations keep rendering. The handler can require a record once history
@@ -241,3 +238,97 @@ cd src/App && npm ci && npm run lint && npm run build && npm audit --omit=dev
 `test_app.py` must run in its own process — running the whole tree in one pytest
 invocation aborts collection. `PYTHONPATH=src:src/backend` is required. Both are
 documented in `CLAUDE.md`.
+
+---
+
+## 6. H3 closed, and a timestamp defect found alongside it
+
+Added 2026-08-16 after the record above was written.
+
+### 6.1 H3 — the clarification bridge
+
+The audit's prescription was "the backend should supply the user id from the
+invoking orchestration". Tracing the live path first changed what that meant:
+
+- The **in-process** clarification path (`request_user_clarification`, given to
+  agents with `user_responses: true`) already gets its user from the
+  orchestration. It was never the exposure.
+- The **MCP** path was. `AskUserService` is registered with
+  `factory.register_shared_service`, so `ask_user` is present on *every* domain
+  server — including the `hr` and `tech_support` servers the two shipped
+  `user_responses` agents connect to. Its `user_id` argument was copied out of
+  the prompt by the model, and `/clarification/ask` believed it.
+
+Two distinct problems followed from that one argument: a model emitting the
+wrong id delivered a question to the wrong person, and anything that could
+reach the endpoint could do the same deliberately, unauthenticated.
+
+The fix removes the argument rather than guarding it. `AgentFactory` mints a
+clarify token (`resource_tokens.PURPOSE_CLARIFY`, one hour) when it builds an
+agent that can ask questions, and embeds it as `SESSION_CLARIFY_TOKEN`. The
+model still copies a value out of its prompt — but it is a value it cannot
+forge, so the worst it can do is address the user it already belongs to. The
+endpoint derives the user from the signature; absent, malformed, expired or
+wrong-purpose tokens are 401.
+
+Deliberate choices worth flagging:
+
+- **No user id appears in the prompt any more.** A model that can read one can
+  emit a different one, so the id is not put in front of it at all. Two tests
+  assert its absence.
+- **A missing user mints nothing.** The agent then has no token and `ask_user`
+  cannot run — chosen over falling back to an identity from anywhere else.
+- **`APP_ENV=dev` still accepts a bare `user_id`**, so the bridge can be
+  exercised with curl locally. It is ignored outside dev even when supplied,
+  and a test asserts the token wins over a conflicting body field.
+
+### 6.2 The timestamp drift
+
+Checked while confirming the container clock (which was exact). The clock was
+never the problem — three separate wall-clock representations were crossing the
+WebSocket, and two of them were wrong:
+
+| Producer | Sent | Read by the browser as |
+|---|---|---|
+| `response_handlers.py` | `time.time()` — epoch **seconds** | `new Date(n)` reads epoch **milliseconds** → January 1970 |
+| `orchestration_manager.py` ×3, `router.py` ×4, `plan_review_helpers.py` | `asyncio.get_event_loop().time()` — a **monotonic** clock | an arbitrary origin; not a wall-clock instant at all |
+| `team_service.py`, `common/models/messages.py` | `datetime.now(timezone.utc)` | correct |
+
+`AgentMessage.timestamp` was annotated `str` and given a float, which is how
+the first one survived review — dataclasses do not enforce annotations.
+
+All eight producers now call a single `utils_date.utc_now_iso()`, which returns
+ISO-8601 with an explicit offset. On the frontend a matching `toEpochMs()`
+normalises ISO strings, epoch seconds and epoch milliseconds to one unit and is
+used at the four sites that previously assumed a number; it tells seconds from
+milliseconds by magnitude. `new Date(...)` then renders in the viewer's own
+zone, so a reader in Kingston sees Eastern time without the backend knowing
+anything about zones.
+
+This ships the repository's **first frontend test** (`src/utils/utils.test.ts`,
+5 tests): the unit mismatch is invisible to type-checking and to every backend
+test, so it needed a guard on the side that consumes it. Note that `npm test`
+previously exited non-zero with "No test files found" and now passes.
+
+### 6.3 Verification
+
+Re-run at `740a49a` plus these changes, working tree otherwise clean:
+
+| Check | Result |
+|---|---|
+| Backend, isolated | **31 passed** |
+| Backend, remainder | **918 passed**, 52 subtests (was 903; 15 added) |
+| Coverage | **86%** (4,115 statements, 574 uncovered) |
+| Backend lint | **flake8 clean** |
+| MCP server | **29 passed** |
+| Frontend tests | **5 passed** (new) |
+| Frontend lint | **0 errors**, 13 pre-existing warnings |
+| Frontend build | **succeeds** |
+
+One test-harness defect was introduced and fixed during the work, worth
+recording because it is the kind that hides: stubbing `common.utils` in
+`test_agent_factory.py` left a Mock in `sys.modules` for every module collected
+afterwards, so the router's token tests began verifying signatures against a
+Mock and passed for the wrong reason. The stub is now installed only for the
+duration of the import and removed immediately after. Tests that pass alone and
+fail in the suite — or vice versa — have been the recurring hazard in this tree.

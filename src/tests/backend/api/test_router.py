@@ -380,14 +380,68 @@ class TestClarificationAsk:
         resp = rt.client.post("/api/v4/clarification/ask", json={"question": ""})
         assert resp.status_code == 400
 
+    def _token(self, user_id="user-1"):
+        resource_tokens = router_mod.resource_tokens
+        return resource_tokens.mint(
+            resource_tokens.PURPOSE_CLARIFY, "", user_id, 60
+        )
+
     def test_success(self, rt):
         rt.orchestration_config.wait_for_clarification.return_value = "answer!"
         resp = rt.client.post(
             "/api/v4/clarification/ask",
-            json={"question": "why?", "user_id": "user-1"},
+            json={"question": "why?", "session_token": self._token()},
         )
         assert resp.status_code == 200
         assert resp.json()["answer"] == "answer!"
+
+    def test_the_user_comes_from_the_token_not_the_body(self, rt):
+        """The delivery target is derived from the signature, not the payload.
+
+        A caller that signs as one user and names another in the body must be
+        treated as the user it can actually prove.
+        """
+        rt.orchestration_config.wait_for_clarification.return_value = "answer!"
+        resp = rt.client.post(
+            "/api/v4/clarification/ask",
+            json={
+                "question": "why?",
+                "session_token": self._token("owner"),
+                "user_id": "someone-else",
+            },
+        )
+        assert resp.status_code == 200
+        rt.orchestration_config.set_clarification_pending.assert_called_once()
+        assert (
+            rt.orchestration_config.set_clarification_pending.call_args.kwargs["user_id"]
+            == "owner"
+        )
+
+    def test_no_token_is_refused(self, rt):
+        resp = rt.client.post(
+            "/api/v4/clarification/ask",
+            json={"question": "why?", "user_id": "user-1"},
+        )
+        assert resp.status_code == 401
+
+    def test_a_forged_token_is_refused(self, rt):
+        resp = rt.client.post(
+            "/api/v4/clarification/ask",
+            json={"question": "why?", "session_token": "not.a.token"},
+        )
+        assert resp.status_code == 401
+
+    def test_a_token_for_another_purpose_is_refused(self, rt):
+        """An image token must not double as permission to interrupt a user."""
+        resource_tokens = router_mod.resource_tokens
+        token = resource_tokens.mint(
+            resource_tokens.PURPOSE_IMAGE, "", "user-1", 60
+        )
+        resp = rt.client.post(
+            "/api/v4/clarification/ask",
+            json={"question": "why?", "session_token": token},
+        )
+        assert resp.status_code == 401
 
     def test_timeout(self, rt):
         import asyncio
@@ -397,7 +451,7 @@ class TestClarificationAsk:
         )
         resp = rt.client.post(
             "/api/v4/clarification/ask",
-            json={"question": "why?", "user_id": "user-1"},
+            json={"question": "why?", "session_token": self._token()},
         )
         assert resp.status_code == 200
         assert resp.json()["answer"] == ""
@@ -408,7 +462,7 @@ class TestClarificationAsk:
         )
         resp = rt.client.post(
             "/api/v4/clarification/ask",
-            json={"question": "why?", "user_id": "user-1"},
+            json={"question": "why?", "session_token": self._token()},
         )
         assert resp.status_code == 200
         assert resp.json()["answer"] == ""

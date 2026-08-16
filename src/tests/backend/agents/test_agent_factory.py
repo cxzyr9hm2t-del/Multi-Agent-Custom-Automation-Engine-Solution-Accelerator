@@ -60,7 +60,36 @@ _mock_mcp_config_mod.VectorStoreConfig = mock_vector_store_config_cls
 sys.modules["config.mcp_config"] = _mock_mcp_config_mod
 
 # Now import the module under test (full backend.* path as per project convention)
+# agent_factory mints a clarify token for agents with user_responses=true.
+# common is a Mock here, so the token module is stubbed with a real string
+# return value — the factory embeds it in the prompt.
+class _StubTokenError(Exception):
+    pass
+
+
+_mock_resource_tokens = Mock(
+    mint=Mock(return_value="stub-clarify-token"),
+    verify=Mock(return_value="stub-user"),
+    PURPOSE_CLARIFY="clarify",
+    DEFAULT_CLARIFY_TTL_SECONDS=3600,
+    ResourceTokenError=_StubTokenError,
+)
+# The stub is installed only for the duration of the import below and then
+# removed. `common` is a Mock in this module, so without it the import fails —
+# but leaving a fake `common.utils` in sys.modules would deny the real package
+# to every test module collected after this one, and the router's token tests
+# would then verify signatures against a Mock.
+_saved_common_utils = sys.modules.get("common.utils")
+sys.modules["common.utils"] = Mock(resource_tokens=_mock_resource_tokens)
+sys.modules["common.utils.resource_tokens"] = _mock_resource_tokens
+
 from backend.agents.agent_factory import AgentFactory, UnsupportedModelError
+
+if _saved_common_utils is not None:
+    sys.modules["common.utils"] = _saved_common_utils
+else:
+    del sys.modules["common.utils"]
+del sys.modules["common.utils.resource_tokens"]
 
 # ---------------------------------------------------------------------------
 # Helper builder
@@ -150,6 +179,66 @@ class TestCreateAgentFromConfig:
         call_kwargs = mock_agent_template_cls.call_args[1]
         assert "CRITICAL RULES" in call_kwargs["agent_instructions"]
         assert "Be helpful." in call_kwargs["agent_instructions"]
+
+    @pytest.mark.asyncio
+    async def test_user_responses_embeds_a_clarify_token_not_the_user_id(self):
+        """The prompt must carry a signed token, never the raw user id.
+
+        ask_user used to take a user_id the model copied out of its prompt, so
+        a model that emitted a different id delivered the question to a
+        different person. The agent is now given a token it cannot forge.
+        """
+        agent_instance = Mock()
+        agent_instance.open = AsyncMock()
+        mock_agent_template_cls.return_value = agent_instance
+        _mock_resource_tokens.mint.reset_mock()
+
+        await self.factory.create_agent_from_config(
+            "user123",
+            _agent_obj(user_responses=True, system_message="Be helpful."),
+            self.team_config,
+            self.memory_store,
+        )
+
+        instructions = mock_agent_template_cls.call_args[1]["agent_instructions"]
+        assert "SESSION_CLARIFY_TOKEN: stub-clarify-token" in instructions
+        assert "user123" not in instructions
+        _mock_resource_tokens.mint.assert_called_once_with(
+            "clarify", subject="", user_id="user123", ttl_seconds=3600
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_clarify_token_is_minted_without_user_responses(self):
+        """Agents that cannot ask the user get no credential."""
+        agent_instance = Mock()
+        agent_instance.open = AsyncMock()
+        mock_agent_template_cls.return_value = agent_instance
+        _mock_resource_tokens.mint.reset_mock()
+
+        await self.factory.create_agent_from_config(
+            "user123", _agent_obj(), self.team_config, self.memory_store
+        )
+
+        _mock_resource_tokens.mint.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_missing_user_yields_no_token_rather_than_a_guess(self):
+        """Fail closed: no id means no token, so ask_user simply cannot run."""
+        agent_instance = Mock()
+        agent_instance.open = AsyncMock()
+        mock_agent_template_cls.return_value = agent_instance
+        _mock_resource_tokens.mint.reset_mock()
+
+        await self.factory.create_agent_from_config(
+            "",
+            _agent_obj(user_responses=True, system_message="Be helpful."),
+            self.team_config,
+            self.memory_store,
+        )
+
+        instructions = mock_agent_template_cls.call_args[1]["agent_instructions"]
+        assert "SESSION_CLARIFY_TOKEN" not in instructions
+        _mock_resource_tokens.mint.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_user_responses_false_no_mcp_config(self):

@@ -40,7 +40,7 @@ class AskUserService(MCPToolBase):
         """Register the ask_user tool on the given FastMCP server."""
 
         @mcp.tool()
-        async def ask_user(question: str, user_id: str) -> str:
+        async def ask_user(question: str, session_token: str) -> str:
             """Ask the human user one or more clarifying questions and return their answer.
 
             Call this tool when you need information that was not provided in
@@ -56,25 +56,27 @@ class AskUserService(MCPToolBase):
             Do NOT call this tool multiple times in a row.
 
             Args:
-                question: One or more questions formatted as a numbered list.
-                          Combine all missing information into this single string.
-                user_id:  REQUIRED — copy the EXACT value from the very first
-                          line of your system instructions which reads
-                          ``SESSION_USER_ID: <value>``.  It is a UUID like
-                          ``00000000-0000-0000-0000-000000000000``.
-                          DO NOT guess, invent, or use placeholder values like
-                          "default".  If you cannot find SESSION_USER_ID in
-                          your instructions, do NOT call this tool.
+                question:      One or more questions formatted as a numbered
+                               list. Combine all missing information into this
+                               single string.
+                session_token: REQUIRED — copy the EXACT value of
+                               ``SESSION_CLARIFY_TOKEN`` from your system
+                               instructions. It identifies the person to ask.
+                               DO NOT guess or invent one, and do NOT pass a
+                               user id or any other value here. If your
+                               instructions do not contain
+                               SESSION_CLARIFY_TOKEN, do NOT call this tool.
 
             Returns:
                 The user's answer as a plain string.
             """
             url = f"{BACKEND_URL}/api/v4/clarification/ask"
-            payload = {"question": question, "user_id": user_id}
+            payload = {"question": question, "session_token": session_token}
 
+            # The token is a credential: log only that one was supplied.
             logger.info(
-                "ask_user: relaying question to backend (user=%s): %.120s",
-                user_id,
+                "ask_user: relaying question to backend (token supplied: %s): %.120s",
+                bool(session_token),
                 question,
             )
 
@@ -84,11 +86,7 @@ class AskUserService(MCPToolBase):
                     resp.raise_for_status()
                     data = resp.json()
                     answer = data.get("answer", "")
-                    logger.info(
-                        "ask_user: received answer (user=%s): %.120s",
-                        user_id,
-                        answer,
-                    )
+                    logger.info("ask_user: received answer: %.120s", answer)
                     return answer or "The user did not provide an answer."
             except httpx.TimeoutException:
                 logger.warning("ask_user: timed out waiting for user response.")

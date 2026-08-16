@@ -276,7 +276,7 @@ and what could not be completed — is in
 | C5 | Fixed | The MCP server is on internal ingress. |
 | H1 | Fixed | CORS is scoped to `FRONTEND_SITE_NAME`. |
 | H2 | Fixed | RAI validation runs on every upload; the "passed" event no longer fires when nothing was validated. |
-| H3 | **Partially fixed** | The clarification can no longer be *answered* by anyone else (C3), and outside dev it can no longer be misdelivered. `/clarification/ask` is still unauthenticated, so a question can still be pushed into a user's UI. The root cause is that `ask_user` takes its `user_id` from the model; the durable fix is for the backend to supply it from the invoking orchestration. |
+| H3 | Fixed | The clarification can no longer be *answered* by anyone else (C3), and outside dev it can no longer be misdelivered. The endpoint no longer takes its target from the caller either: `AgentFactory` mints a signed, expiring clarify token when it builds an agent with `user_responses=true`, `ask_user` passes that token instead of a `user_id`, and `/clarification/ask` derives the user from the signature. An absent, forged, expired or wrong-purpose token is a 401, so the model chooses the *question* but never the *recipient*. |
 | H4 | Fixed | `delete_plan_by_plan_id` constrains `data_type` and `user_id`. |
 | H5 | Fixed | `/agent_message` authorizes against the plan it targets and requires a `plan_id`. |
 | M1 | Fixed | Updates go through `update_team_configuration`, preserving the stored document's identity and partition key. Default teams are refused with a 403 — an authorization gap the audit missed. |

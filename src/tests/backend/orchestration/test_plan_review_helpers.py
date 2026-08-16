@@ -139,6 +139,14 @@ sys.modules['orchestration.helper.plan_to_mplan_converter'] = Mock(
 )
 
 # ---- Import module under test ----
+# common.utils is replaced by a Mock in other test modules, and module-level
+# sys.modules edits leak across the session, so the submodule must be stubbed
+# here too or the import fails depending on collection order.
+sys.modules.setdefault(
+    "common.utils.utils_date",
+    Mock(utc_now_iso=Mock(return_value="2026-08-16T17:00:00+00:00")),
+)
+
 from backend.orchestration.plan_review_helpers import (
     convert_plan_review_to_mplan, get_magentic_prompt_kwargs,
     wait_for_plan_approval)

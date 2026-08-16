@@ -1,11 +1,31 @@
 import json
 import locale
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import regex as re
 from dateutil import parser
+
+
+def utc_now_iso() -> str:
+    """Return the current instant as an ISO-8601 string in UTC.
+
+    Every timestamp the backend sends to the browser should come from here.
+    Two other things had been used for the job and neither survived the trip:
+
+    * ``time.time()`` produces epoch **seconds**, while JavaScript's ``Date``
+      constructor reads a bare number as epoch **milliseconds**. A message
+      stamped that way rendered as January 1970.
+    * ``asyncio.get_event_loop().time()`` is a **monotonic** clock counting
+      from an arbitrary origin. It is the right tool for measuring a duration
+      and meaningless as a wall-clock instant.
+
+    An ISO-8601 string with an explicit offset is unambiguous in transit and
+    is parsed correctly by ``new Date(...)``, which then renders it in the
+    viewer's own time zone.
+    """
+    return datetime.now(timezone.utc).isoformat()
 
 
 def format_date_for_user(date_str: str, user_locale: Optional[str] = None) -> str:

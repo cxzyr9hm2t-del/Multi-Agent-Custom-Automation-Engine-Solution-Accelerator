@@ -7,6 +7,7 @@ import uuid
 import re
 from typing import List, Optional
 
+from common.utils.utils_date import utc_now_iso
 import models.messages as messages
 from agent_framework import (Agent, AgentResponseUpdate,
                              InMemoryCheckpointStorage, Message,
@@ -510,7 +511,7 @@ class OrchestrationManager:
                     "data": {
                         "content": final_text,
                         "status": "completed",
-                        "timestamp": asyncio.get_event_loop().time(),
+                        "timestamp": utc_now_iso(),
                     },
                 },
                 user_id,
@@ -534,7 +535,7 @@ class OrchestrationManager:
                         "data": {
                             "content": f"Error during orchestration: {str(e)}",
                             "status": "error",
-                            "timestamp": asyncio.get_event_loop().time(),
+                            "timestamp": utc_now_iso(),
                         },
                     },
                     user_id,
@@ -810,7 +811,7 @@ class OrchestrationManager:
                     "data": {
                         "content": message,
                         "status": "completed",
-                        "timestamp": asyncio.get_event_loop().time(),
+                        "timestamp": utc_now_iso(),
                     },
                 },
                 user_id,

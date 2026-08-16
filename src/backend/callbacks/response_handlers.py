@@ -5,7 +5,6 @@ Enhanced response callbacks (agent_framework version) for employee onboarding ag
 import asyncio
 import logging
 import re
-import time
 from typing import Any
 
 from agent_framework import AgentResponseUpdate, Message
@@ -14,6 +13,7 @@ from models.messages import (AgentMessage, AgentMessageStreaming,
                              WebsocketMessageType)
 from orchestration.connection_config import connection_config
 from common.utils.markdown_utils import normalize_markdown_tables
+from common.utils.utils_date import utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ def agent_response_callback(
     try:
         final_message = AgentMessage(
             agent_name=agent_name,
-            timestamp=time.time(),
+            timestamp=utc_now_iso(),
             content=text,
         )
         asyncio.create_task(

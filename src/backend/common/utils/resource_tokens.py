@@ -35,9 +35,14 @@ logger = logging.getLogger(__name__)
 # resource cannot be replayed against another.
 PURPOSE_SOCKET = "socket"
 PURPOSE_IMAGE = "image"
+PURPOSE_CLARIFY = "clarify"
 
 DEFAULT_SOCKET_TTL_SECONDS = 120
 DEFAULT_IMAGE_TTL_SECONDS = 900
+# A clarify token lives as long as a plausible orchestration: it is minted when
+# the agent is built and must still verify when that agent asks its question,
+# which may be many turns later.
+DEFAULT_CLARIFY_TTL_SECONDS = 3600
 
 _process_signing_key: bytes | None = None
 

@@ -19,6 +19,7 @@ import logging
 from contextlib import AsyncExitStack
 
 from agent_framework import Agent, MCPStreamableHTTPTool
+from common.utils import resource_tokens
 from config.mcp_config import MCPConfig
 
 logger = logging.getLogger(__name__)
@@ -30,13 +31,14 @@ logger = logging.getLogger(__name__)
 _USER_INTERACTION_INSTRUCTIONS = """You are the UserInteractionAgent — the ONLY agent
 that communicates with the human user.
 
-SESSION_USER_ID: {user_id}
+SESSION_CLARIFY_TOKEN: {clarify_token}
 
 YOUR ROLE:
 - When the MagenticManager selects you, it means user clarification is needed.
 - The manager's message to you will describe WHAT information is needed.
 - Call the ask_user tool ONCE with a clear, numbered list of questions.
-- Pass SESSION_USER_ID as the user_id argument.
+- Pass SESSION_CLARIFY_TOKEN as the session_token argument, copied exactly.
+  It identifies the person to ask. Never substitute a user id or invent one.
 - Return the user's answers verbatim — do NOT interpret, filter, or act on them.
 
 RULES:
@@ -91,7 +93,17 @@ async def create_user_interaction_agent(
         mcp_config.url,
     )
 
-    instructions = _USER_INTERACTION_INSTRUCTIONS.format(user_id=user_id)
+    # The agent is handed a signed token rather than the raw user id: the
+    # backend derives the person to ask from the token's signature, so a model
+    # that emits something else cannot redirect the question. See
+    # AgentFactory._clarify_token_prompt and the /clarification/ask endpoint.
+    clarify_token = resource_tokens.mint(
+        resource_tokens.PURPOSE_CLARIFY,
+        subject="",
+        user_id=user_id,
+        ttl_seconds=resource_tokens.DEFAULT_CLARIFY_TTL_SECONDS,
+    )
+    instructions = _USER_INTERACTION_INSTRUCTIONS.format(clarify_token=clarify_token)
 
     agent = Agent(
         chat_client,

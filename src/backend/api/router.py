@@ -14,6 +14,7 @@ from common.database.database_factory import DatabaseFactory
 from common.models.messages import (InputTask, Plan, PlanStatus,
                                     TeamSelectionRequest)
 from common.utils.event_utils import track_event_if_configured
+from common.utils.utils_date import utc_now_iso
 from common.utils.resource_tokens import (DEFAULT_IMAGE_TTL_SECONDS,
                                           DEFAULT_SOCKET_TTL_SECONDS,
                                           PURPOSE_IMAGE, PURPOSE_SOCKET,
@@ -198,7 +199,7 @@ async def start_comms(
                         json.dumps(
                             {
                                 "type": WebsocketMessageType.PING,
-                                "data": {"ts": asyncio.get_event_loop().time()},
+                                "data": {"ts": utc_now_iso()},
                             },
                             default=str,
                         )
@@ -702,7 +703,7 @@ async def plan_approval(
                             "data": {
                                 "content": "Approval failed due to invalid input.",
                                 "status": "error",
-                                "timestamp": asyncio.get_event_loop().time(),
+                                "timestamp": utc_now_iso(),
                             },
                         },
                         user_id,
@@ -717,7 +718,7 @@ async def plan_approval(
                             "data": {
                                 "content": "An unexpected error occurred while processing the approval.",
                                 "status": "error",
-                                "timestamp": asyncio.get_event_loop().time(),
+                                "timestamp": utc_now_iso(),
                             },
                         },
                         user_id,
@@ -761,7 +762,7 @@ async def plan_approval(
                     "data": {
                         "content": "An error occurred while processing your approval request.",
                         "status": "error",
-                        "timestamp": asyncio.get_event_loop().time(),
+                        "timestamp": utc_now_iso(),
                     },
                 },
                 user_id,
@@ -783,17 +784,49 @@ async def plan_approval(
 async def clarification_ask(request: Request):
     """Synchronous bridge for the MCP ``ask_user`` tool.
 
-    The MCP server POSTs ``{question, user_id}`` here. This endpoint:
+    The MCP server POSTs ``{question, session_token}`` here. This endpoint:
     1. Sends a ``USER_CLARIFICATION_REQUEST`` to the user via WebSocket.
     2. Blocks until the user responds (or the request times out).
     3. Returns ``{answer}`` so the MCP tool can pass it back to the agent.
+
+    **Who gets asked is decided here, not by the caller.** The endpoint used to
+    take a ``user_id`` from the body, which the model had copied out of its
+    prompt — so the delivery target of a clarification was chosen by model
+    output, and anything able to reach this endpoint could put a question in an
+    arbitrary user's browser. The caller now presents a token minted by
+    ``AgentFactory`` when it built the agent, and the user is read from the
+    token's signed payload. An unsigned, tampered, expired or absent token is
+    refused.
+
+    In ``APP_ENV=dev`` a bare ``user_id`` is still accepted, so the bridge can
+    be exercised with curl against a local backend. Outside dev it is ignored
+    even when present.
     """
     body = await request.json()
     question = body.get("question", "")
-    user_id = body.get("user_id", "")
+    session_token = body.get("session_token", "")
 
-    if not question or not user_id:
-        raise HTTPException(status_code=400, detail="question and user_id are required")
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+
+    if session_token:
+        try:
+            user_id = resource_tokens.verify(
+                session_token, resource_tokens.PURPOSE_CLARIFY, ""
+            )
+        except resource_tokens.ResourceTokenError as exc:
+            logger.warning("clarification/ask: rejected session token: %s", exc)
+            raise HTTPException(
+                status_code=401, detail="Invalid or expired session token."
+            )
+    elif config.APP_ENV == "dev" and body.get("user_id"):
+        user_id = body["user_id"]
+        logger.warning(
+            "clarification/ask: accepting an unsigned user_id because APP_ENV=dev. "
+            "This path does not exist outside development."
+        )
+    else:
+        raise HTTPException(status_code=401, detail="A session token is required.")
 
     request_id = str(uuid.uuid4())
 
