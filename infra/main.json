@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "17775288733861273358"
+      "templateHash": "8029527664400261771"
     },
     "name": "Multi-Agent Custom Automation Engine - Deployment Router",
     "description": "Deployment router for the Multi-Agent Custom Automation Engine accelerator. Routes to either the AVM or vanilla Bicep orchestrator and preserves a unified deployment contract."
@@ -376,6 +376,13 @@
         "description": "Optional. Enable redundancy for applicable resources. Defaults to true when deploymentFlavor is avm-waf."
       }
     },
+    "backendAuthClientId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token."
+      }
+    },
     "vmAdminUsername": {
       "type": "securestring",
       "nullable": true,
@@ -414,6 +421,9 @@
         },
         "mode": "Incremental",
         "parameters": {
+          "backendAuthClientId": {
+            "value": "[parameters('backendAuthClientId')]"
+          },
           "solutionName": {
             "value": "[parameters('solutionName')]"
           },
@@ -561,7 +571,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "6216243501205527784"
+              "templateHash": "14289405380607557127"
             },
             "name": "Multi-Agent Custom Automation Engine - AVM",
             "description": "AVM orchestrator for the Multi-Agent Custom Automation Engine accelerator. Deploys the same logical resources and preserves the same outputs as infra\\main.bicep using local AVM wrapper modules."
@@ -835,6 +845,13 @@
               "defaultValue": false,
               "metadata": {
                 "description": "Optional. Enable scalability for applicable resources, aligned with the Well Architected Framework recommendations. Defaults to false."
+              }
+            },
+            "backendAuthClientId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token."
               }
             },
             "enableRedundancy": {
@@ -55417,6 +55434,9 @@
                   "ingressTargetPort": {
                     "value": 8000
                   },
+                  "authClientId": {
+                    "value": "[parameters('backendAuthClientId')]"
+                  },
                   "ingressAllowInsecure": {
                     "value": false
                   },
@@ -55456,7 +55476,7 @@
                   "scaleSettings": {
                     "value": {
                       "minReplicas": 1,
-                      "maxReplicas": "[if(parameters('enableScalability'), 3, 1)]"
+                      "maxReplicas": 1
                     }
                   },
                   "containers": {
@@ -55602,7 +55622,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.44.1.10279",
-                      "templateHash": "10535819316717631477"
+                      "templateHash": "16780218873755511174"
                     }
                   },
                   "parameters": {
@@ -55751,6 +55771,20 @@
                       "metadata": {
                         "description": "Optional. Bool indicating if the Container App should enable session affinity."
                       }
+                    },
+                    "authClientId": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour."
+                      }
+                    },
+                    "authTenantId": {
+                      "type": "string",
+                      "defaultValue": "[tenant().tenantId]",
+                      "metadata": {
+                        "description": "Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant."
+                      }
                     }
                   },
                   "resources": {
@@ -55814,7 +55848,8 @@
                           },
                           "stickySessionsAffinity": {
                             "value": "[parameters('stickySessionsAffinity')]"
-                          }
+                          },
+                          "authConfig": "[if(empty(parameters('authClientId')), createObject('value', createObject()), createObject('value', createObject('platform', createObject('enabled', true()), 'globalValidation', createObject('unauthenticatedClientAction', 'Return401'), 'identityProviders', createObject('azureActiveDirectory', createObject('enabled', true(), 'registration', createObject('openIdIssuer', format('https://login.microsoftonline.com/{0}/v2.0', parameters('authTenantId')), 'clientId', parameters('authClientId')), 'validation', createObject('allowedAudiences', createArray(format('api://{0}', parameters('authClientId')), parameters('authClientId'))))))))]"
                         },
                         "template": {
                           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -57415,7 +57450,7 @@
                     "value": "[reference('containerAppEnvironment').outputs.resourceId.value]"
                   },
                   "ingressExternal": {
-                    "value": true
+                    "value": false
                   },
                   "ingressTargetPort": {
                     "value": 9000
@@ -57550,7 +57585,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.44.1.10279",
-                      "templateHash": "10535819316717631477"
+                      "templateHash": "16780218873755511174"
                     }
                   },
                   "parameters": {
@@ -57699,6 +57734,20 @@
                       "metadata": {
                         "description": "Optional. Bool indicating if the Container App should enable session affinity."
                       }
+                    },
+                    "authClientId": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour."
+                      }
+                    },
+                    "authTenantId": {
+                      "type": "string",
+                      "defaultValue": "[tenant().tenantId]",
+                      "metadata": {
+                        "description": "Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant."
+                      }
                     }
                   },
                   "resources": {
@@ -57762,7 +57811,8 @@
                           },
                           "stickySessionsAffinity": {
                             "value": "[parameters('stickySessionsAffinity')]"
-                          }
+                          },
+                          "authConfig": "[if(empty(parameters('authClientId')), createObject('value', createObject()), createObject('value', createObject('platform', createObject('enabled', true()), 'globalValidation', createObject('unauthenticatedClientAction', 'Return401'), 'identityProviders', createObject('azureActiveDirectory', createObject('enabled', true(), 'registration', createObject('openIdIssuer', format('https://login.microsoftonline.com/{0}/v2.0', parameters('authTenantId')), 'clientId', parameters('authClientId')), 'validation', createObject('allowedAudiences', createArray(format('api://{0}', parameters('authClientId')), parameters('authClientId'))))))))]"
                         },
                         "template": {
                           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -76782,6 +76832,9 @@
         },
         "mode": "Incremental",
         "parameters": {
+          "backendAuthClientId": {
+            "value": "[parameters('backendAuthClientId')]"
+          },
           "solutionName": {
             "value": "[parameters('solutionName')]"
           },
@@ -76904,7 +76957,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "1904819476144963209"
+              "templateHash": "7178611093949924057"
             },
             "name": "Multi-Agent Custom Automation Engine - Vanilla Bicep",
             "description": "Vanilla Bicep orchestrator for the Multi-Agent Custom Automation Engine accelerator. This deployment intentionally excludes WAF features such as private networking, scale-out, redundancy, bastion, and VM resources while keeping router-compatible outputs."
@@ -77246,6 +77299,13 @@
               "defaultValue": "",
               "metadata": {
                 "description": "Optional. Resource ID of an existing Azure Container Registry to reuse. If empty, a new container registry is created."
+              }
+            },
+            "backendAuthClientId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token."
               }
             }
           },
@@ -79593,6 +79653,9 @@
                   "ingressTargetPort": {
                     "value": 8000
                   },
+                  "authClientId": {
+                    "value": "[parameters('backendAuthClientId')]"
+                  },
                   "managedIdentities": {
                     "value": {
                       "userAssignedResourceIds": [
@@ -79772,7 +79835,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.44.1.10279",
-                      "templateHash": "9640201944207164847"
+                      "templateHash": "11794322749949043609"
                     }
                   },
                   "parameters": {
@@ -79903,6 +79966,20 @@
                       "metadata": {
                         "description": "Workload profile name."
                       }
+                    },
+                    "authClientId": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour."
+                      }
+                    },
+                    "authTenantId": {
+                      "type": "string",
+                      "defaultValue": "[tenant().tenantId]",
+                      "metadata": {
+                        "description": "Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant."
+                      }
                     }
                   },
                   "variables": {
@@ -79935,6 +80012,38 @@
                           }
                         }
                       }
+                    },
+                    "containerAppAuth": {
+                      "condition": "[not(empty(parameters('authClientId')))]",
+                      "type": "Microsoft.App/containerApps/authConfigs",
+                      "apiVersion": "2024-10-02-preview",
+                      "name": "[format('{0}/{1}', parameters('name'), 'current')]",
+                      "properties": {
+                        "platform": {
+                          "enabled": true
+                        },
+                        "globalValidation": {
+                          "unauthenticatedClientAction": "Return401"
+                        },
+                        "identityProviders": {
+                          "azureActiveDirectory": {
+                            "enabled": true,
+                            "registration": {
+                              "openIdIssuer": "[format('https://login.microsoftonline.com/{0}/v2.0', parameters('authTenantId'))]",
+                              "clientId": "[parameters('authClientId')]"
+                            },
+                            "validation": {
+                              "allowedAudiences": [
+                                "[format('api://{0}', parameters('authClientId'))]",
+                                "[parameters('authClientId')]"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "dependsOn": [
+                        "containerApp"
+                      ]
                     }
                   },
                   "outputs": {
@@ -80001,7 +80110,7 @@
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', take(format('module.container-app-environment.{0}', variables('solutionSuffix')), 64)), '2025-04-01').outputs.resourceId.value]"
                   },
                   "ingressExternal": {
-                    "value": true
+                    "value": false
                   },
                   "ingressTargetPort": {
                     "value": 9000
@@ -80130,7 +80239,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.44.1.10279",
-                      "templateHash": "9640201944207164847"
+                      "templateHash": "11794322749949043609"
                     }
                   },
                   "parameters": {
@@ -80261,6 +80370,20 @@
                       "metadata": {
                         "description": "Workload profile name."
                       }
+                    },
+                    "authClientId": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour."
+                      }
+                    },
+                    "authTenantId": {
+                      "type": "string",
+                      "defaultValue": "[tenant().tenantId]",
+                      "metadata": {
+                        "description": "Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant."
+                      }
                     }
                   },
                   "variables": {
@@ -80293,6 +80416,38 @@
                           }
                         }
                       }
+                    },
+                    "containerAppAuth": {
+                      "condition": "[not(empty(parameters('authClientId')))]",
+                      "type": "Microsoft.App/containerApps/authConfigs",
+                      "apiVersion": "2024-10-02-preview",
+                      "name": "[format('{0}/{1}', parameters('name'), 'current')]",
+                      "properties": {
+                        "platform": {
+                          "enabled": true
+                        },
+                        "globalValidation": {
+                          "unauthenticatedClientAction": "Return401"
+                        },
+                        "identityProviders": {
+                          "azureActiveDirectory": {
+                            "enabled": true,
+                            "registration": {
+                              "openIdIssuer": "[format('https://login.microsoftonline.com/{0}/v2.0', parameters('authTenantId'))]",
+                              "clientId": "[parameters('authClientId')]"
+                            },
+                            "validation": {
+                              "allowedAudiences": [
+                                "[format('api://{0}', parameters('authClientId'))]",
+                                "[parameters('authClientId')]"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "dependsOn": [
+                        "containerApp"
+                      ]
                     }
                   },
                   "outputs": {
