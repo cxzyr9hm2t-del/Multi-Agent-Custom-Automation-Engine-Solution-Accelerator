@@ -7,6 +7,7 @@ and TeamConfig — the three singletons imported together by the router.
 """
 
 import asyncio
+import time
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -55,6 +56,11 @@ class OrchestrationConfig:
         # release their agent workflow.
         self._approval_owners: Dict[str, str] = {}
         self._clarification_owners: Dict[str, str] = {}
+
+        # Deadlines for clarifications answered by polling rather than by an
+        # awaited event. Nothing is awaiting them, so nothing would otherwise
+        # expire them. Monotonic clock — see set_clarification_pending.
+        self._clarification_deadlines: Dict[str, float] = {}
 
     def get_current_orchestration(self, user_id: str) -> Any:
         """Get existing orchestration workflow instance for user_id."""
@@ -134,9 +140,22 @@ class OrchestrationConfig:
     # ------------------------------------------------------------------ #
 
     def set_clarification_pending(
-        self, request_id: str, user_id: Optional[str] = None
+        self,
+        request_id: str,
+        user_id: Optional[str] = None,
+        ttl_seconds: Optional[float] = None,
     ) -> None:
-        """Mark clarification pending, record its owner, and create/reset its event."""
+        """Mark clarification pending, record its owner, and create/reset its event.
+
+        Args:
+            request_id: The clarification's id.
+            user_id: The user being asked — only they may answer it.
+            ttl_seconds: How long the request stays answerable. Required by the
+                polled path: with nobody awaiting the event there is no
+                ``asyncio.wait_for`` to expire the entry, so the deadline is
+                recorded here and enforced by ``poll_clarification``. Defaults
+                to ``default_timeout``.
+        """
         self.clarifications[request_id] = None
         if user_id:
             self._clarification_owners[request_id] = user_id
@@ -144,6 +163,46 @@ class OrchestrationConfig:
             self._clarification_events[request_id] = asyncio.Event()
         else:
             self._clarification_events[request_id].clear()
+
+        ttl = self.default_timeout if ttl_seconds is None else ttl_seconds
+        # Monotonic: a wall-clock jump must not expire a live request early or
+        # keep a dead one answerable.
+        self._clarification_deadlines[request_id] = time.monotonic() + ttl
+
+    def poll_clarification(self, request_id: str) -> tuple[str, Optional[str]]:
+        """Return ``(status, answer)`` for a clarification without blocking.
+
+        This is the non-blocking counterpart to ``wait_for_clarification``. The
+        blocking form is still correct for the in-process tool path, where the
+        awaiting coroutine and the answer live in the same process. It is wrong
+        for the MCP bridge, where awaiting it held an HTTP request open across
+        the backend's public ingress for up to five minutes — long enough for
+        any idle timeout in the path to discard a clarification the user was
+        about to answer.
+
+        Status is one of:
+            ``input_required`` — asked, not yet answered
+            ``completed``      — answered; ``answer`` is set
+            ``expired``        — passed its deadline; tracking has been dropped
+            ``unknown``        — never registered, or already cleaned up
+
+        An answered clarification is deliberately **not** cleaned up on read, so
+        a poll whose response is lost in transit can be retried. It is dropped
+        when its deadline passes.
+        """
+        if request_id not in self.clarifications:
+            return ("unknown", None)
+
+        answer = self.clarifications[request_id]
+        if answer is not None:
+            return ("completed", answer)
+
+        deadline = self._clarification_deadlines.get(request_id)
+        if deadline is not None and time.monotonic() >= deadline:
+            self.cleanup_clarification(request_id)
+            return ("expired", None)
+
+        return ("input_required", None)
 
     def clarification_owner(self, request_id: str) -> Optional[str]:
         """Return the user a pending clarification belongs to, or None if unrecorded."""
@@ -190,6 +249,7 @@ class OrchestrationConfig:
         self.clarifications.pop(request_id, None)
         self._clarification_events.pop(request_id, None)
         self._clarification_owners.pop(request_id, None)
+        self._clarification_deadlines.pop(request_id, None)
 
 
 class ConnectionConfig:

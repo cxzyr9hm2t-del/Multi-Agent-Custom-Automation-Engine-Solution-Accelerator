@@ -1,7 +1,7 @@
 # MRTR migration path — getting off the single-replica constraint
 
 **Date:** 2026-08-16
-**Status:** design note. Nothing here is implemented.
+**Status:** design note. **Track A is now implemented** (see §3); Tracks B and C are not.
 **Related:** `2026-08-15-forensic-audit.md` (M3), `2026-08-16-remediation-record.md` §1.1
 
 ---
@@ -102,10 +102,20 @@ should be made explicit when the pin is next touched.
 
 ---
 
-## 3. Track A — Tasks-based clarification (available today, verified)
+## 3. Track A — polled clarification (IMPLEMENTED)
 
-**This is the part that can start now, and it delivers most of the operational
+**This is the part that could start now, and it delivers most of the operational
 benefit of MRTR without waiting for anything.**
+
+> **Implemented.** Scope note: what shipped is the *polling* half — the backend
+> bridge no longer blocks, and the MCP server polls. Declaring `ask_user` as a
+> task-augmented MCP tool was **not** done, because the agent-side client is
+> `agent-framework`'s `MCPStreamableHTTPTool` and there is no way to verify from
+> this repository that it drives `tasks/get`; declaring the tool a task without
+> that support would break it outright. The remaining long-lived hop is
+> agent → MCP server, which is internal to the Container Apps environment. The
+> hop that was fixed — MCP server → backend — is the one crossing the backend's
+> **public** ingress, and therefore the one exposed to idle timeouts.
 
 The Tasks feature already exists in the pinned stack. Verified directly:
 
@@ -119,18 +129,33 @@ FastMCP.tool params: ..., task, timeout, auth
 `mcp==1.28.1` already defines `tasks/get`, `tasks/result`, `tasks/cancel` and the
 `input_required` status. Nothing needs upgrading.
 
-### What changes
+### What shipped
 
-`ask_user` stops being a 300-second blocking HTTP call and becomes a task:
+`ask_user` stops being a 300-second blocking HTTP call:
 
-1. `ask_user` is declared task-augmented. It registers the question and returns a
-   `taskId` immediately with status `input_required` — no held connection.
-2. `/clarification/ask` returns immediately instead of awaiting
-   `wait_for_clarification`. It keeps the existing signed-token authorization
-   unchanged; the token continues to decide *who* is asked.
-3. The agent polls `tasks/get` (respecting `pollInterval`) until the status leaves
-   `input_required`, then reads the answer via `tasks/result`.
-4. `set_clarification_result` writes the answer against the `taskId`.
+1. `/clarification/ask` registers the clarification, delivers the question over the
+   WebSocket, and **returns immediately** with `{request_id, status:
+   "input_required", poll_interval_seconds, expires_in_seconds}`. Signed-token
+   authorization is unchanged; the token still decides *who* is asked.
+2. New `POST /clarification/result` returns `input_required`, `completed`,
+   `expired` or `unknown`. It requires the same clarify token **and** checks that
+   the token's user owns that request — a valid token for one user is not
+   permission to read another's answer. An unrecorded owner is refused, matching
+   the approval gate's fail-closed stance.
+3. The MCP server creates, then polls at the cadence the backend advertises, until
+   an answer arrives or its own wall-clock budget runs out. Each HTTP call now has
+   a 30 s timeout instead of 300 s.
+4. `OrchestrationConfig` gains `poll_clarification()` and a deadline per request.
+   The deadline is **necessary**: with nobody awaiting the event there is no
+   `asyncio.wait_for` to expire the entry, so without it the dicts would grow
+   without bound. An answered request is deliberately not cleaned up on read, so a
+   poll whose response is lost can be retried.
+
+The status vocabulary (`input_required` / `completed`) is deliberately MCP's, so
+Track B swaps transport rather than redesigning.
+
+**Deferred:** declaring `ask_user` task-augmented via `@mcp.tool(task=...)`. See
+the scope note above — it needs agent-side support that cannot be verified here.
 
 ### What it buys
 
@@ -150,13 +175,18 @@ land and be reported as "M3 fixed".**
 
 ### Files
 
-- `src/mcp_server/services/ask_user_service.py` — task-augmented tool, poll loop
-- `src/backend/api/router.py` — `/clarification/ask` returns immediately
+- `src/mcp_server/services/ask_user_service.py` — create-then-poll, short per-request timeout
+- `src/backend/api/router.py` — `/clarification/ask` returns immediately; new `/clarification/result`
 - `src/backend/orchestration/connection_config.py` — key by `taskId`
-- `src/tests/backend/api/test_router.py`, `src/tests/mcp_server/` — the existing
-  clarification tests assert the blocking contract and will need rewriting. That is
-  expected: it is the 15th test in this codebase found asserting a behaviour we
-  intend to change.
+- `src/tests/backend/api/test_router.py` — three tests asserted the blocking
+  contract and were rewritten; nine added for the polled endpoint. That makes 17
+  tests in this codebase found asserting behaviour we intended to change.
+- `src/tests/backend/orchestration/test_connection_config.py` — eight tests for the
+  poll/expiry state machine.
+- `src/tests/mcp_server/test_ask_user_service.py` — **new file.** `ask_user` had no
+  coverage at all, which is where the riskiest new logic now lives: a loop with a
+  deadline and four terminal statuses. Fourteen tests, including that an old
+  blocking backend is still honoured during rollout.
 
 ---
 

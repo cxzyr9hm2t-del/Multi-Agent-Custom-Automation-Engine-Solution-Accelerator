@@ -52,6 +52,66 @@ orchestration_config = _cc.orchestration_config
 team_config = _cc.team_config
 
 
+class TestPollClarification:
+    """The non-blocking counterpart to wait_for_clarification.
+
+    The MCP bridge polls instead of awaiting, so nothing holds an HTTP request
+    open across the public ingress while a human types. That removes the
+    awaited timeout too, which is why expiry has to be enforced here.
+    """
+
+    def test_unregistered_request_is_unknown(self):
+        cfg = OrchestrationConfig()
+        assert cfg.poll_clarification("nope") == ("unknown", None)
+
+    def test_pending_request_is_input_required(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        assert cfg.poll_clarification("r1") == ("input_required", None)
+
+    def test_answered_request_is_completed(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        cfg.set_clarification_result("r1", "42")
+        assert cfg.poll_clarification("r1") == ("completed", "42")
+
+    def test_an_answer_survives_being_read_twice(self):
+        """A poll whose response is lost in transit must be retryable."""
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        cfg.set_clarification_result("r1", "42")
+        assert cfg.poll_clarification("r1") == ("completed", "42")
+        assert cfg.poll_clarification("r1") == ("completed", "42")
+
+    def test_past_its_deadline_it_expires_and_is_dropped(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1", ttl_seconds=0)
+        assert cfg.poll_clarification("r1") == ("expired", None)
+        # Dropped, not merely reported — otherwise the dicts grow without bound
+        # now that no awaited timeout cleans them up.
+        assert cfg.poll_clarification("r1") == ("unknown", None)
+        assert cfg.clarification_owner("r1") is None
+        assert "r1" not in cfg._clarification_deadlines
+
+    def test_an_answer_arriving_late_still_wins_over_expiry(self):
+        """Answered is checked before the deadline: the user did reply."""
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1", ttl_seconds=0)
+        cfg.set_clarification_result("r1", "42")
+        assert cfg.poll_clarification("r1") == ("completed", "42")
+
+    def test_ttl_defaults_to_the_configured_timeout(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        assert cfg.poll_clarification("r1")[0] == "input_required"
+
+    def test_cleanup_drops_the_deadline_too(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        cfg.cleanup_clarification("r1")
+        assert "r1" not in cfg._clarification_deadlines
+
+
 # ----------------------------------------------------------------------- #
 # OrchestrationConfig
 # ----------------------------------------------------------------------- #

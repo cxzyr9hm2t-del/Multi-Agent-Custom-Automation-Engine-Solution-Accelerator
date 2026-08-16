@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 # a WebSocket handshake the caller is not authorized to make.
 WS_POLICY_VIOLATION = 1008
 
+# How often the ask_user bridge should poll for an answer. Advertised to the
+# caller rather than hard-coded at both ends, so the cadence can change here
+# without redeploying the MCP server.
+CLARIFICATION_POLL_INTERVAL_SECONDS = 2.0
+
 app_router = APIRouter(
     prefix="/api/v4",
     responses={404: {"description": "Not found"}},
@@ -829,10 +834,13 @@ async def clarification_ask(request: Request):
         raise HTTPException(status_code=401, detail="A session token is required.")
 
     request_id = str(uuid.uuid4())
+    ttl_seconds = orchestration_config.default_timeout
 
     # Register the pending clarification in orchestration state, owned by the
     # user being asked — only they may answer it.
-    orchestration_config.set_clarification_pending(request_id, user_id=user_id)
+    orchestration_config.set_clarification_pending(
+        request_id, user_id=user_id, ttl_seconds=ttl_seconds
+    )
 
     # Send the question to the user's browser via WebSocket
     clarification_request = messages.UserClarificationRequest(
@@ -848,17 +856,73 @@ async def clarification_ask(request: Request):
         message_type=WebsocketMessageType.USER_CLARIFICATION_REQUEST,
     )
 
-    # Block until the user responds (the existing /user_clarification
-    # endpoint calls set_clarification_result when the user answers).
-    try:
-        answer = await orchestration_config.wait_for_clarification(request_id)
-    except asyncio.TimeoutError:
-        return {"answer": ""}
-    except Exception as exc:
-        logger.error("clarification/ask: error waiting for response: %s", exc)
-        return {"answer": ""}
+    # Return as soon as the question is delivered. The caller polls
+    # /clarification/result for the answer.
+    return {
+        "request_id": request_id,
+        "status": "input_required",
+        "poll_interval_seconds": CLARIFICATION_POLL_INTERVAL_SECONDS,
+        "expires_in_seconds": ttl_seconds,
+    }
 
-    return {"answer": answer}
+
+@app_router.post("/clarification/result")
+async def clarification_result(request: Request):
+    """Return the answer to a clarification, or report that it is still pending.
+
+    The polling half of the ``ask_user`` bridge. Authorization is identical to
+    ``/clarification/ask``: the caller presents the clarify token minted for the
+    agent, and the user is read from its signature. The token must additionally
+    own *this* request — a valid token for one user is not permission to read
+    another user's answer.
+
+    Statuses mirror the MCP task vocabulary (``input_required`` / ``completed``),
+    so this maps onto Tasks, and later onto MRTR's ``resultType``, without the
+    callers changing shape.
+    """
+    body = await request.json()
+    request_id = body.get("request_id", "")
+    session_token = body.get("session_token", "")
+
+    if not request_id:
+        raise HTTPException(status_code=400, detail="request_id is required")
+
+    if session_token:
+        try:
+            user_id = resource_tokens.verify(
+                session_token, resource_tokens.PURPOSE_CLARIFY, ""
+            )
+        except resource_tokens.ResourceTokenError as exc:
+            logger.warning("clarification/result: rejected session token: %s", exc)
+            raise HTTPException(
+                status_code=401, detail="Invalid or expired session token."
+            )
+    elif config.APP_ENV == "dev" and body.get("user_id"):
+        user_id = body["user_id"]
+    else:
+        raise HTTPException(status_code=401, detail="A session token is required.")
+
+    status, answer = orchestration_config.poll_clarification(request_id)
+
+    # Check ownership before reporting anything about the request — including
+    # whether it exists. Fail closed on an unrecorded owner, as the approval
+    # gate does: it should never happen, since every registration records one.
+    if status != "unknown":
+        owner = orchestration_config.clarification_owner(request_id)
+        if owner != user_id:
+            logger.warning(
+                "Rejected clarification poll '%s' by user '%s' (owner: %s)",
+                request_id, user_id, owner,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="This clarification request does not belong to you.",
+            )
+
+    if status == "completed":
+        return {"status": "completed", "answer": answer}
+
+    return {"status": status, "poll_interval_seconds": CLARIFICATION_POLL_INTERVAL_SECONDS}
 
 
 @app_router.post("/user_clarification")
