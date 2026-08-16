@@ -481,13 +481,31 @@ class TestCosmosDBPlanOperations:
         result = await client.get_plan_by_plan_id("test_plan_id")
         
         assert result == mock_plan
-        expected_query = "SELECT * FROM c WHERE c.id=@plan_id AND c.data_type=@data_type"
+        expected_query = (
+            "SELECT * FROM c WHERE c.id=@plan_id AND c.data_type=@data_type "
+            "AND c.user_id=@user_id"
+        )
         expected_params = [
             {"name": "@plan_id", "value": "test_plan_id"},
             {"name": "@data_type", "value": DataType.plan},
             {"name": "@user_id", "value": "test_user"},
         ]
         client.query_items.assert_called_once_with(expected_query, expected_params, Plan)
+
+    @pytest.mark.asyncio
+    async def test_get_plan_by_plan_id_is_scoped_to_the_current_user(self, client):
+        """The query must constrain user_id, not merely bind it.
+
+        Binding @user_id without referencing it in the WHERE clause is the exact
+        shape of the original defect: any plan_id resolved for any caller.
+        """
+        client.query_items.return_value = []
+
+        await client.get_plan_by_plan_id("someone_elses_plan")
+
+        query, params, _ = client.query_items.call_args[0]
+        assert "c.user_id=@user_id" in query
+        assert {"name": "@user_id", "value": "test_user"} in params
     
     @pytest.mark.asyncio
     async def test_get_plan_by_plan_id_not_found(self, client):
@@ -1007,9 +1025,33 @@ class TestCosmosDBMiscellaneousOperations:
         client.container.delete_item = AsyncMock()
         
         result = await client.delete_plan_by_plan_id("test_plan_id")
-        
+
         assert result is True
         client.container.delete_item.assert_called_once_with("plan1", partition_key="session1")
+
+    @pytest.mark.asyncio
+    async def test_delete_plan_by_plan_id_is_scoped_to_user_and_type(self, client):
+        """Deletion must match only the caller's own plans.
+
+        Filtering on c.id alone matched any document with that id — a team
+        configuration or another user's plan just as readily as the caller's.
+        """
+        async def async_gen():
+            for doc in []:
+                yield doc
+
+        client.container.query_items = Mock(return_value=async_gen())
+        client.container.delete_item = AsyncMock()
+
+        await client.delete_plan_by_plan_id("someone_elses_plan")
+
+        kwargs = client.container.query_items.call_args.kwargs
+        query, params = kwargs["query"], kwargs["parameters"]
+        assert "c.user_id=@user_id" in query
+        assert "c.data_type=@data_type" in query
+        assert {"name": "@user_id", "value": "test_user"} in params
+        assert {"name": "@data_type", "value": DataType.plan} in params
+        client.container.delete_item.assert_not_called()
     
     @pytest.mark.asyncio
     async def test_add_mplan(self, client):

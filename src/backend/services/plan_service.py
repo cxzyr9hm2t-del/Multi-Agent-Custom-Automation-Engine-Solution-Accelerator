@@ -205,6 +205,16 @@ class PlanService:
             await memory_store.add_agent_message(agent_msg)
             if agent_message.is_final:
                 plan = await memory_store.get_plan(agent_msg.plan_id)
+                if plan is None:
+                    # The plan does not exist, or belongs to another user — the
+                    # lookup is scoped to the caller. Previously this dereferenced
+                    # None and reported the resulting AttributeError as success.
+                    logger.warning(
+                        "No plan '%s' for user '%s'; not marking it completed",
+                        agent_msg.plan_id,
+                        user_id,
+                    )
+                    return False
                 plan.streaming_message = agent_message.streaming_message
                 plan.overall_status = PlanStatus.completed
                 await memory_store.update_plan(plan)
