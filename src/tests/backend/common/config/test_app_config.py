@@ -219,18 +219,6 @@ class TestAppConfigPrivateMethods:
             result = config._get_optional("NON_EXISTENT_VAR")
             assert result == ""
 
-    @patch.dict(os.environ, {"BOOL_TRUE": "true", "BOOL_FALSE": "false", "BOOL_1": "1", "BOOL_0": "0"})
-    def test_get_bool_method(self):
-        """Test _get_bool method with various boolean values."""
-        with patch.dict(os.environ, self._get_minimal_env()):
-            config = AppConfig()
-            
-            assert config._get_bool("BOOL_TRUE") is True
-            assert config._get_bool("BOOL_1") is True
-            assert config._get_bool("BOOL_FALSE") is False
-            assert config._get_bool("BOOL_0") is False
-            assert config._get_bool("NON_EXISTENT_VAR") is False
-
 
 class TestAppConfigCredentials:
     """Test cases for credential management methods in AppConfig class."""
@@ -568,29 +556,33 @@ class TestAppConfigUtilityMethods:
             "AZURE_AI_AGENT_ENDPOINT": "https://test.ai.azure.com"
         }
 
-    @patch.dict(os.environ, {"USER_LOCAL_BROWSER_LANGUAGE": "fr-FR"})
-    def test_get_user_local_browser_language_with_env_var(self):
-        """Test get_user_local_browser_language with environment variable set."""
-        with patch.dict(os.environ, self._get_minimal_env()):
-            config = AppConfig()
-            result = config.get_user_local_browser_language()
-            assert result == "fr-FR"
-
     def test_get_user_local_browser_language_default(self):
-        """Test get_user_local_browser_language with default value."""
+        """An unknown user falls back to en-US."""
         with patch.dict(os.environ, self._get_minimal_env()):
             config = AppConfig()
-            result = config.get_user_local_browser_language()
-            assert result == "en-US"
+            assert config.get_user_local_browser_language("nobody") == "en-US"
 
     def test_set_user_local_browser_language(self):
-        """Test set_user_local_browser_language method."""
+        """The language is held per user, not in the process environment.
+
+        This used to write os.environ["USER_LOCAL_BROWSER_LANGUAGE"], which made
+        one user's locale the whole process's locale.
+        """
         with patch.dict(os.environ, self._get_minimal_env()):
             config = AppConfig()
-            config.set_user_local_browser_language("es-ES")
-            
-            assert os.environ["USER_LOCAL_BROWSER_LANGUAGE"] == "es-ES"
-            assert config.get_user_local_browser_language() == "es-ES"
+            config.set_user_local_browser_language("alice", "es-ES")
+
+            assert config.get_user_local_browser_language("alice") == "es-ES"
+            assert "USER_LOCAL_BROWSER_LANGUAGE" not in os.environ
+
+    def test_user_local_browser_language_is_isolated_between_users(self):
+        with patch.dict(os.environ, self._get_minimal_env()):
+            config = AppConfig()
+            config.set_user_local_browser_language("alice", "es-ES")
+            config.set_user_local_browser_language("bob", "ja-JP")
+
+            assert config.get_user_local_browser_language("alice") == "es-ES"
+            assert config.get_user_local_browser_language("bob") == "ja-JP"
 
     def test_get_agents_method(self):
         """Test get_agents method returns the agents dictionary."""
@@ -644,8 +636,8 @@ class TestAppConfigIntegration:
             assert config.MCP_SERVER_ENDPOINT == "http://prod.mcp.server:8000/mcp"
             
             # Test utility methods work correctly
-            language = config.get_user_local_browser_language()
-            assert language == "en-GB"
+            config.set_user_local_browser_language("alice", "en-GB")
+            assert config.get_user_local_browser_language("alice") == "en-GB"
             
             agents = config.get_agents()
             assert isinstance(agents, dict)

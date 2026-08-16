@@ -64,6 +64,13 @@ from backend.app import app, user_browser_language_endpoint, lifespan
 from backend.common.models.messages import UserLanguage
 
 
+def _authenticated_request(user_id="user-1"):
+    """A request carrying the principal header the endpoint now requires."""
+    request = Mock()
+    request.headers = {"x-ms-client-principal-id": user_id}
+    return request
+
+
 def test_app_initialization():
     """Test that FastAPI app initializes correctly."""
     assert app is not None
@@ -114,10 +121,9 @@ def test_user_language_model_different_languages():
 async def test_user_browser_language_endpoint_function():
     """Test the user_browser_language_endpoint function directly."""
     user_lang = UserLanguage(language="fr-FR")
-    request = Mock()
-    
-    result = await user_browser_language_endpoint(user_lang, request)
-    
+
+    result = await user_browser_language_endpoint(user_lang, _authenticated_request())
+
     assert result == {"status": "Language received successfully"}
     assert isinstance(result, dict)
 
@@ -125,12 +131,50 @@ async def test_user_browser_language_endpoint_function():
 @pytest.mark.asyncio
 async def test_user_browser_language_endpoint_multiple_calls():
     """Test the endpoint with multiple different languages."""
-    request = Mock()
-    
+    request = _authenticated_request()
+
     for lang_code in ["en-US", "es-ES", "fr-FR"]:
         user_lang = UserLanguage(language=lang_code)
         result = await user_browser_language_endpoint(user_lang, request)
         assert result["status"] == "Language received successfully"
+
+
+@pytest.mark.asyncio
+async def test_user_browser_language_requires_a_user():
+    """The endpoint used to accept anyone and write process-global state.
+
+    APP_ENV is 'dev' in this module, where a missing principal still resolves
+    to the sample user by design, so this pins the deployed behaviour.
+    """
+    import backend.auth.auth_utils as auth_utils
+    from fastapi import HTTPException
+
+    user_lang = UserLanguage(language="fr-FR")
+    request = Mock()
+    request.headers = {}
+
+    with patch.object(auth_utils.config, "APP_ENV", "prod"):
+        with pytest.raises(HTTPException) as exc:
+            await user_browser_language_endpoint(user_lang, request)
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_user_browser_language_is_recorded_per_user():
+    """One user's locale must not become the whole process's locale."""
+    import backend.app as app_module
+
+    await user_browser_language_endpoint(
+        UserLanguage(language="fr-FR"), _authenticated_request("alice")
+    )
+    await user_browser_language_endpoint(
+        UserLanguage(language="ja-JP"), _authenticated_request("bob")
+    )
+
+    config = app_module.config
+    assert config.get_user_local_browser_language("alice") == "fr-FR"
+    assert config.get_user_local_browser_language("bob") == "ja-JP"
+    assert config.get_user_local_browser_language("carol") == "en-US"
 
 
 def test_app_router_lifespan():
@@ -241,10 +285,8 @@ def test_app_includes_user_browser_language_route():
 async def test_user_browser_language_sets_config():
     """Test that user_browser_language endpoint calls config method."""
     user_lang = UserLanguage(language="de-DE")
-    request = Mock()
-    
-    # Just test that it completes successfully and returns expected result
-    result = await user_browser_language_endpoint(user_lang, request)
+
+    result = await user_browser_language_endpoint(user_lang, _authenticated_request())
     assert result == {"status": "Language received successfully"}
 
 
@@ -267,18 +309,25 @@ class TestAppConfiguration:
         """Test that middleware stack is configured."""
         assert len(app.user_middleware) > 0
     
-    def test_cors_middleware_allows_all_origins(self):
-        """Test CORS middleware is configured to allow all origins."""
+    def test_cors_middleware_restricts_origins_to_frontend(self):
+        """CORS is scoped to FRONTEND_SITE_NAME, not a wildcard.
+
+        A wildcard origin combined with allow_credentials=True makes Starlette
+        reflect the caller's Origin back, which would let any site issue
+        credentialed cross-origin requests. The conftest sets FRONTEND_SITE_NAME
+        to http://localhost:3000, so that is the only origin expected here.
+        """
         from starlette.middleware.cors import CORSMiddleware
         cors_middleware = None
         for m in app.user_middleware:
             if hasattr(m, 'cls') and m.cls == CORSMiddleware:
                 cors_middleware = m
                 break
-        
+
         assert cors_middleware is not None
-        # Check that allow_origins includes "*" - using kwargs attribute
-        assert "*" in cors_middleware.kwargs.get('allow_origins', [])
+        origins = cors_middleware.kwargs.get('allow_origins', [])
+        assert origins == ['http://localhost:3000']
+        assert '*' not in origins
     
     def test_cors_middleware_allows_credentials(self):
         """Test CORS middleware allows credentials."""
@@ -314,10 +363,9 @@ async def test_user_browser_language_endpoint_logs_info(caplog):
     import logging
     
     user_lang = UserLanguage(language="pt-BR")
-    request = Mock()
-    
+
     with caplog.at_level(logging.INFO):
-        await user_browser_language_endpoint(user_lang, request)
+        await user_browser_language_endpoint(user_lang, _authenticated_request())
     
     # Check that log contains the language info
     assert any("pt-BR" in record.message or "Received browser language" in record.message 

@@ -51,7 +51,7 @@ import {
 } from '@/models';
 import { APIService } from '@/api/apiService';
 import { ToastIntent } from '@/components/toast/InlineToaster';
-import { formatElapsedTime } from '@/utils';
+import { formatElapsedTime, toEpochMs } from '@/utils';
 
 const apiService = new APIService();
 
@@ -222,7 +222,7 @@ export function usePlanWebSocket({
                 const agentMessageData: AgentMessageData = {
                     agent: AgentType.GROUP_CHAT_MANAGER,
                     agent_type: AgentMessageType.AI_AGENT,
-                    timestamp: (msg.timestamp as number) || Date.now(),
+                    timestamp: toEpochMs(msg.timestamp as string | number) ?? Date.now(),
                     steps: [],
                     next_steps: [],
                     content: (msg.data?.question as string) || '',

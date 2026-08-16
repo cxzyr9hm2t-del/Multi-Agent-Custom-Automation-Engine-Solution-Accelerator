@@ -8,12 +8,13 @@ from common.config.app_config import config
 logging.basicConfig(level=getattr(logging, config.AZURE_BASIC_LOGGING_LEVEL.upper(), logging.INFO))
 
 from api.router import app_router
+from auth.auth_utils import get_authenticated_user_details
 from azure.monitor.opentelemetry import configure_azure_monitor
 from common.config.app_config import config
 from common.models.messages import UserLanguage
 from config.agent_registry import agent_registry
 # FastAPI imports
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -116,12 +117,19 @@ else:
         "No Application Insights connection string found. Telemetry disabled."
     )
 
-# Add this near the top of your app.py, after initializing the app
+# Restrict CORS to the configured frontend origin.
+#
+# `allow_origins=["*"]` together with `allow_credentials=True` makes Starlette
+# reflect the caller's own Origin back when credentials are present, which lets
+# any site issue credentialed cross-origin requests and read the responses.
+# FRONTEND_SITE_NAME is the origin the frontend is actually served from; local
+# development sets it to "*" deliberately (see docs/LocalDevelopmentSetup.md),
+# which restores the permissive behaviour only for that case.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development; restrict in production
+    allow_origins=[frontend_url],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -156,10 +164,18 @@ async def user_browser_language_endpoint(user_language: UserLanguage, request: R
               type: string
               description: Confirmation message
     """
-    config.set_user_local_browser_language(user_language.language)
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    if not user_id:
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid user information"
+        )
 
-    # Log the received language for the user
-    logging.info(f"Received browser language '{user_language}' for user ")
+    config.set_user_local_browser_language(user_id, user_language.language)
+
+    logging.info(
+        "Received browser language '%s' for user '%s'", user_language.language, user_id
+    )
 
     return {"status": "Language received successfully"}
 

@@ -4,11 +4,51 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { FluentProvider, teamsLightTheme, teamsDarkTheme } from "@fluentui/react-components";
-import { setEnvData, setApiUrl, config as defaultConfig, toBoolean, getUserInfo, setUserInfoGlobal } from './api/config';
+import { setEnvData, setApiUrl, config as defaultConfig, toBoolean, getUserInfo, setUserInfoGlobal, setImageToken } from './api/config';
 import { apiService } from './api';
 import { Provider as ReduxProvider } from 'react-redux';
 import { store } from './store/store';
 const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
+
+/**
+ * Pull an access token for the backend API out of the App Service token store.
+ *
+ * When the backend is behind Container Apps authentication it expects a bearer
+ * token for its own audience (see docs/backend_api_authentication.md). App
+ * Service EasyAuth exposes one at /.auth/me once the frontend registration has
+ * been granted the API's scope. Silent no-op when the endpoint is absent, so
+ * deployments without a front door are unaffected.
+ */
+async function acquireApiAccessToken(): Promise<void> {
+  if (localStorage.getItem('token')) return;
+  try {
+    const response = await fetch('/.auth/me', { credentials: 'include' });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const accessToken = Array.isArray(payload) ? payload[0]?.access_token : payload?.access_token;
+    if (accessToken) {
+      localStorage.setItem('token', accessToken);
+    }
+  } catch {
+    // No token store in front of this deployment — carry on unauthenticated.
+  }
+}
+
+/**
+ * Mint the short-lived token appended to generated-image URLs, and keep it
+ * fresh. Images are loaded by a plain <img src> and cannot send a header.
+ */
+async function refreshImageToken(): Promise<void> {
+  try {
+    const { token, expires_in } = await apiService.getImageToken();
+    setImageToken(token);
+    // Re-mint a little before expiry so long-lived sessions keep rendering.
+    const refreshInMs = Math.max((expires_in - 60), 60) * 1000;
+    window.setTimeout(refreshImageToken, refreshInMs);
+  } catch {
+    setImageToken(null);
+  }
+}
 
 const AppWrapper = () => {
   // State to store the current theme
@@ -40,6 +80,8 @@ const AppWrapper = () => {
         window.userInfo = defaultUserInfo;
         setUserInfoGlobal(defaultUserInfo);
         await apiService.sendUserBrowserLanguage();
+        await acquireApiAccessToken();
+        await refreshImageToken();
       } catch (error) {
           console.info("frontend config did not load from python", error);
       } finally {

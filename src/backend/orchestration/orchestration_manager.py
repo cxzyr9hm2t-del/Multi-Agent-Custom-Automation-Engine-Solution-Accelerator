@@ -7,6 +7,7 @@ import uuid
 import re
 from typing import List, Optional
 
+from common.utils.utils_date import utc_now_iso
 import models.messages as messages
 from agent_framework import (Agent, AgentResponseUpdate,
                              InMemoryCheckpointStorage, Message,
@@ -35,7 +36,7 @@ from services.team_service import TeamService
 
 # Apply patch: MAF bug causes tool_call/tool_result messages to leak across
 # participants in GroupChat, triggering "No tool call found for call_id" 400 errors.
-# See localspec/bugs/framework/F1-tool-history-leak.md
+# See the module docstring in patches/tool_history_leak.py for the details.
 apply_tool_history_leak_patch()
 
 _BARE_IMAGE_URL_RE = re.compile(
@@ -292,7 +293,6 @@ class OrchestrationManager:
                 cls.logger.error(
                     "Failed to create agents for user '%s': %s", user_id, e
                 )
-                print(f"Failed to create agents for user '{user_id}': {e}")
                 raise
             try:
                 cls.logger.info("Initializing new orchestration for user '%s'", user_id)
@@ -305,7 +305,6 @@ class OrchestrationManager:
                 cls.logger.error(
                     "Failed to initialize orchestration for user '%s': %s", user_id, e
                 )
-                print(f"Failed to initialize orchestration for user '{user_id}': {e}")
                 raise
 
         elif needs_workflow_reset:
@@ -339,7 +338,6 @@ class OrchestrationManager:
                 cls.logger.error(
                     "Failed to reset orchestration for user '%s': %s", user_id, e
                 )
-                print(f"Failed to reset orchestration for user '{user_id}': {e}")
                 raise
 
         return orchestration_config.get_current_orchestration(user_id)
@@ -359,7 +357,7 @@ class OrchestrationManager:
         5. Repeat until the workflow completes with no pending requests.
         """
         job_id = str(uuid.uuid4())
-        orchestration_config.set_approval_pending(job_id)
+        orchestration_config.set_approval_pending(job_id, user_id=user_id)
         self.logger.info(
             "Starting orchestration job '%s' for user '%s'", job_id, user_id
         )
@@ -513,7 +511,7 @@ class OrchestrationManager:
                     "data": {
                         "content": final_text,
                         "status": "completed",
-                        "timestamp": asyncio.get_event_loop().time(),
+                        "timestamp": utc_now_iso(),
                     },
                 },
                 user_id,
@@ -537,7 +535,7 @@ class OrchestrationManager:
                         "data": {
                             "content": f"Error during orchestration: {str(e)}",
                             "status": "error",
-                            "timestamp": asyncio.get_event_loop().time(),
+                            "timestamp": utc_now_iso(),
                         },
                     },
                     user_id,
@@ -813,7 +811,7 @@ class OrchestrationManager:
                     "data": {
                         "content": message,
                         "status": "completed",
-                        "timestamp": asyncio.get_event_loop().time(),
+                        "timestamp": utc_now_iso(),
                     },
                 },
                 user_id,
@@ -939,8 +937,8 @@ class OrchestrationManager:
                 request_id, questions[:120],
             )
 
-            # Register pending clarification
-            orchestration_config.set_clarification_pending(request_id)
+            # Register pending clarification, owned by the user being asked
+            orchestration_config.set_clarification_pending(request_id, user_id=user_id)
 
             # Send to frontend via WebSocket
             await connection_config.send_status_update_async(

@@ -38,6 +38,12 @@ class AppConfig:
         )
         self.APP_ENV = self._get_required("APP_ENV", "prod")
 
+        # HMAC key for the short-lived resource tokens that let <img> and
+        # WebSocket requests authenticate without a header. Optional: when
+        # unset a per-process key is generated, which is sound while the
+        # backend runs at a single replica. See common/utils/resource_tokens.py.
+        self.API_TOKEN_SIGNING_KEY = self._get_optional("API_TOKEN_SIGNING_KEY")
+
         self.AZURE_COGNITIVE_SERVICES = self._get_optional(
             "AZURE_COGNITIVE_SERVICES", "https://cognitiveservices.azure.com/.default"
         )
@@ -116,6 +122,7 @@ class AppConfig:
         self._ai_project_client = None
 
         self._agents = {}
+        self._user_browser_languages: dict[str, str] = {}
 
     def get_azure_credential(self, client_id=None):
         """
@@ -209,17 +216,6 @@ class AppConfig:
             return os.environ[name]
         return default
 
-    def _get_bool(self, name: str) -> bool:
-        """Get a boolean configuration value from environment variables.
-
-        Args:
-            name: The name of the environment variable
-
-        Returns:
-            True if the environment variable exists and is set to 'true' or '1', False otherwise
-        """
-        return name in os.environ and os.environ[name].lower() in ["true", "1"]
-
     def get_cosmos_database_client(self):
         """Get a Cosmos DB client for the configured database.
 
@@ -278,21 +274,30 @@ class AppConfig:
             logging.error("Failed to create AIProjectClient: %s", exc)
             raise
 
-    def get_user_local_browser_language(self) -> str:
-        """Get the user's local browser language from environment variables.
-
-        Returns:
-            The user's local browser language or 'en-US' if not set
-        """
-        return self._get_optional("USER_LOCAL_BROWSER_LANGUAGE", "en-US")
-
-    def set_user_local_browser_language(self, language: str):
-        """Set the user's local browser language in environment variables.
+    def get_user_local_browser_language(self, user_id: str) -> str:
+        """Get a user's browser language.
 
         Args:
+            user_id: The user whose language to read
+
+        Returns:
+            That user's browser language, or 'en-US' if none was recorded
+        """
+        return self._user_browser_languages.get(user_id, "en-US")
+
+    def set_user_local_browser_language(self, user_id: str, language: str) -> None:
+        """Record a user's browser language.
+
+        This used to write ``os.environ["USER_LOCAL_BROWSER_LANGUAGE"]``, which
+        made one user's locale the whole process's locale and mutated the
+        environment at request time. It is now keyed per user and held in
+        memory alongside the other per-user state.
+
+        Args:
+            user_id: The user the language belongs to
             language: The language code to set (e.g., 'en-US')
         """
-        os.environ["USER_LOCAL_BROWSER_LANGUAGE"] = language
+        self._user_browser_languages[user_id] = language
 
     # Get agent team list by user_id dictionary index
     def get_agents(self) -> dict[str, list]:

@@ -15,6 +15,7 @@ from agents.agent_template import AgentTemplate
 from common.config.app_config import config
 from common.database.database_base import DatabaseBase
 from common.models.messages import TeamConfiguration
+from common.utils import resource_tokens
 from config.mcp_config import KnowledgeBaseConfig, MCPConfig, VectorStoreConfig
 from tools.clarification_tool import request_user_clarification
 
@@ -55,6 +56,32 @@ CRITICAL RULES — READ BEFORE ACTING:
 6. Do NOT re-ask anything already answered in the conversation history.
 """
 
+# ---------------------------------------------------------------------------
+# Identity for the MCP ask_user bridge.
+#
+# ask_user is registered as a shared MCP service, so every agent that connects
+# to a domain server can call it — including the two agents in the shipped
+# content packs that set user_responses=true. It used to take a raw user_id
+# argument copied out of the prompt by the model, which meant the delivery
+# target of a clarification was model-supplied: a model that emitted a
+# different id would put its question in a different person's browser, and
+# anything that could POST to the bridge could do the same deliberately.
+#
+# The agent is now given a signed, expiring token instead. The model still
+# copies it, but it cannot mint one, so the worst it can do is address the user
+# whose orchestration it is already part of. The backend derives the user from
+# the token's signature rather than believing an argument.
+# ---------------------------------------------------------------------------
+
+_CLARIFY_TOKEN_PROMPT = """
+
+SESSION_CLARIFY_TOKEN: {token}
+
+If you call the ask_user tool, pass the value above as the session_token
+argument, copied exactly. It identifies the person to ask. Do not modify it,
+do not guess one, and if it is missing do not call ask_user at all.
+"""
+
 
 class AgentFactory:
     """Create and manage teams of agents from JSON configuration.
@@ -75,6 +102,36 @@ class AgentFactory:
     # ------------------------------------------------------------------
     # Single-agent creation
     # ------------------------------------------------------------------
+
+    def _clarify_token_prompt(self, user_id: str, agent_name: str) -> str:
+        """Return the prompt fragment carrying this agent's clarify token.
+
+        Returns an empty string when a token cannot be minted, which leaves the
+        agent without one. That is the safe direction: ask_user then refuses the
+        call rather than falling back to an identity the model chose.
+        """
+        if not user_id:
+            self.logger.warning(
+                "Agent '%s' has user_responses=true but no user id was supplied; "
+                "it will not be able to call ask_user.",
+                agent_name,
+            )
+            return ""
+
+        try:
+            token = resource_tokens.mint(
+                resource_tokens.PURPOSE_CLARIFY,
+                subject="",
+                user_id=user_id,
+                ttl_seconds=resource_tokens.DEFAULT_CLARIFY_TTL_SECONDS,
+            )
+        except resource_tokens.ResourceTokenError as exc:
+            self.logger.warning(
+                "Could not mint a clarify token for agent '%s': %s", agent_name, exc
+            )
+            return ""
+
+        return _CLARIFY_TOKEN_PROMPT.format(token=token)
 
     async def create_agent_from_config(
         self,
@@ -162,6 +219,7 @@ class AgentFactory:
         # user_responses=true — tells them to call request_user_clarification.
         if user_responses:
             instructions += _UNIVERSAL_USER_INTERACTION_PROMPT
+            instructions += self._clarify_token_prompt(user_id, agent_obj.name)
 
         # Agents with user_responses=true get the clarification tool directly.
         extra_tools = [request_user_clarification] if user_responses else None

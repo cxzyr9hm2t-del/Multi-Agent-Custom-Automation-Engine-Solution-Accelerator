@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "11051305577029776274"
+      "templateHash": "7178611093949924057"
     },
     "name": "Multi-Agent Custom Automation Engine - Vanilla Bicep",
     "description": "Vanilla Bicep orchestrator for the Multi-Agent Custom Automation Engine accelerator. This deployment intentionally excludes WAF features such as private networking, scale-out, redundancy, bastion, and VM resources while keeping router-compatible outputs."
@@ -347,6 +347,13 @@
       "defaultValue": "",
       "metadata": {
         "description": "Optional. Resource ID of an existing Azure Container Registry to reuse. If empty, a new container registry is created."
+      }
+    },
+    "backendAuthClientId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token."
       }
     }
   },
@@ -1217,7 +1224,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "10180502016624897684"
+              "templateHash": "13733831222630151234"
             }
           },
           "parameters": {
@@ -1243,7 +1250,7 @@
             "modelName": {
               "type": "string",
               "metadata": {
-                "description": "Required. Model name (e.g., gpt-4o, text-embedding-ada-002)."
+                "description": "Required. Model name (e.g., gpt-5.4-mini, text-embedding-ada-002)."
               }
             },
             "modelVersion": {
@@ -2694,6 +2701,9 @@
           "ingressTargetPort": {
             "value": 8000
           },
+          "authClientId": {
+            "value": "[parameters('backendAuthClientId')]"
+          },
           "managedIdentities": {
             "value": {
               "userAssignedResourceIds": [
@@ -2873,7 +2883,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "9640201944207164847"
+              "templateHash": "11794322749949043609"
             }
           },
           "parameters": {
@@ -3004,6 +3014,20 @@
               "metadata": {
                 "description": "Workload profile name."
               }
+            },
+            "authClientId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour."
+              }
+            },
+            "authTenantId": {
+              "type": "string",
+              "defaultValue": "[tenant().tenantId]",
+              "metadata": {
+                "description": "Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant."
+              }
             }
           },
           "variables": {
@@ -3036,6 +3060,38 @@
                   }
                 }
               }
+            },
+            "containerAppAuth": {
+              "condition": "[not(empty(parameters('authClientId')))]",
+              "type": "Microsoft.App/containerApps/authConfigs",
+              "apiVersion": "2024-10-02-preview",
+              "name": "[format('{0}/{1}', parameters('name'), 'current')]",
+              "properties": {
+                "platform": {
+                  "enabled": true
+                },
+                "globalValidation": {
+                  "unauthenticatedClientAction": "Return401"
+                },
+                "identityProviders": {
+                  "azureActiveDirectory": {
+                    "enabled": true,
+                    "registration": {
+                      "openIdIssuer": "[format('https://login.microsoftonline.com/{0}/v2.0', parameters('authTenantId'))]",
+                      "clientId": "[parameters('authClientId')]"
+                    },
+                    "validation": {
+                      "allowedAudiences": [
+                        "[format('api://{0}', parameters('authClientId'))]",
+                        "[parameters('authClientId')]"
+                      ]
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "containerApp"
+              ]
             }
           },
           "outputs": {
@@ -3102,7 +3158,7 @@
             "value": "[reference(resourceId('Microsoft.Resources/deployments', take(format('module.container-app-environment.{0}', variables('solutionSuffix')), 64)), '2025-04-01').outputs.resourceId.value]"
           },
           "ingressExternal": {
-            "value": true
+            "value": false
           },
           "ingressTargetPort": {
             "value": 9000
@@ -3203,8 +3259,16 @@
                     "value": "[parameters('gptImageModelName')]"
                   },
                   {
+                    "name": "AZURE_OPENAI_IMAGE_QUALITY",
+                    "value": "high"
+                  },
+                  {
                     "name": "AZURE_STORAGE_BLOB_URL",
                     "value": "[reference(resourceId('Microsoft.Resources/deployments', take(format('module.storage-account.{0}', variables('solutionSuffix')), 64)), '2025-04-01').outputs.blobEndpoint.value]"
+                  },
+                  {
+                    "name": "AZURE_STORAGE_IMAGES_CONTAINER",
+                    "value": "[parameters('storageContainerNameGeneratedImages')]"
                   },
                   {
                     "name": "BACKEND_URL",
@@ -3223,7 +3287,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "9640201944207164847"
+              "templateHash": "11794322749949043609"
             }
           },
           "parameters": {
@@ -3354,6 +3418,20 @@
               "metadata": {
                 "description": "Workload profile name."
               }
+            },
+            "authClientId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour."
+              }
+            },
+            "authTenantId": {
+              "type": "string",
+              "defaultValue": "[tenant().tenantId]",
+              "metadata": {
+                "description": "Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant."
+              }
             }
           },
           "variables": {
@@ -3386,6 +3464,38 @@
                   }
                 }
               }
+            },
+            "containerAppAuth": {
+              "condition": "[not(empty(parameters('authClientId')))]",
+              "type": "Microsoft.App/containerApps/authConfigs",
+              "apiVersion": "2024-10-02-preview",
+              "name": "[format('{0}/{1}', parameters('name'), 'current')]",
+              "properties": {
+                "platform": {
+                  "enabled": true
+                },
+                "globalValidation": {
+                  "unauthenticatedClientAction": "Return401"
+                },
+                "identityProviders": {
+                  "azureActiveDirectory": {
+                    "enabled": true,
+                    "registration": {
+                      "openIdIssuer": "[format('https://login.microsoftonline.com/{0}/v2.0', parameters('authTenantId'))]",
+                      "clientId": "[parameters('authClientId')]"
+                    },
+                    "validation": {
+                      "allowedAudiences": [
+                        "[format('api://{0}', parameters('authClientId'))]",
+                        "[parameters('authClientId')]"
+                      ]
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "containerApp"
+              ]
             }
           },
           "outputs": {
@@ -3619,7 +3729,6 @@
             "value": {
               "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
               "DOCKER_REGISTRY_SERVER_URL": "[format('https://{0}', if(variables('useExistingContainerRegistry'), format('{0}.azurecr.io', variables('existingContainerRegistryName')), reference(resourceId('Microsoft.Resources/deployments', take(format('module.container-registry.{0}', variables('solutionSuffix')), 64)), '2025-04-01').outputs.loginServer.value))]",
-              "WEBSITES_PORT": "3000",
               "WEBSITES_CONTAINER_START_TIME_LIMIT": "1800",
               "BACKEND_API_URL": "[format('https://{0}', reference(resourceId('Microsoft.Resources/deployments', take(format('module.backend-container-app.{0}', variables('solutionSuffix')), 64)), '2025-04-01').outputs.fqdn.value)]",
               "AUTH_ENABLED": "false",

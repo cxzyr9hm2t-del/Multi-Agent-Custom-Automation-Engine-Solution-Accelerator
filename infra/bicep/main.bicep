@@ -173,6 +173,9 @@ param isCustom bool = false
 @description('Optional. Resource ID of an existing Azure Container Registry to reuse. If empty, a new container registry is created.')
 param existingContainerRegistryResourceId string = ''
 
+@description('Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token.')
+param backendAuthClientId string = ''
+
 var deployerInfo = deployer()
 var deployingUserPrincipalId = deployerInfo.objectId
 var deployerPrincipalType = contains(deployerInfo, 'userPrincipalName') ? 'User' : 'ServicePrincipal'
@@ -496,6 +499,7 @@ module backend_container_app './modules/compute/container-app.bicep' = {
     environmentResourceId: container_app_environment.outputs.resourceId
     ingressExternal: true
     ingressTargetPort: 8000
+    authClientId: backendAuthClientId
     managedIdentities: {
       userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId]
     }
@@ -512,6 +516,11 @@ module backend_container_app './modules/compute/container-app.bicep' = {
         'OPTIONS'
       ]
     }
+    // Pinned to a single replica deliberately. The backend keeps orchestration
+    // handles, pending approvals, clarifications and WebSocket registrations in
+    // process memory (see orchestration/connection_config.py), so a second
+    // replica would strand approvals and socket messages on the wrong instance.
+    // This is a correctness constraint, not a cost setting.
     scaleSettings: {
       minReplicas: 1
       maxReplicas: 1
@@ -668,7 +677,12 @@ module mcp_container_app './modules/compute/container-app.bicep' = {
     location: solutionLocation
     tags: isCustom ? union(allTags, { 'azd-service-name': 'mcp' }) : allTags
     environmentResourceId: container_app_environment.outputs.resourceId
-    ingressExternal: true
+    // Internal ingress: the MCP server is reached only by the backend container,
+    // from inside this Container Apps environment (client-side MCPStreamableHTTPTool
+    // — see agents/agent_template.py). Nothing external consumes it, and it runs
+    // with ENABLE_AUTH=false, so public ingress would expose every domain tool
+    // unauthenticated.
+    ingressExternal: false
     ingressTargetPort: 9000
     managedIdentities: {
       userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId]

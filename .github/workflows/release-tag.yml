@@ -1,0 +1,211 @@
+name: Create Release Tag
+
+# Creates an annotated tag, and optionally a GitHub release, from the Actions
+# runner rather than from someone's laptop.
+#
+# This exists because tagging kept failing. A session working on this repository
+# could push branches all day with its credentials but every tag push returned a
+# bare 403, including from a fresh clone — the grant covered refs/heads/claude/*
+# and not refs/tags/*. The runner's GITHUB_TOKEN has `contents: write` for this
+# repository and no such restriction, so the tag is created here instead.
+#
+# Nothing fires on its own: this is workflow_dispatch only, so a tag appears
+# when a person asks for one and not otherwise.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to create (e.g. v0.1.0)'
+        required: true
+        type: string
+      target:
+        description: 'Commit SHA to tag. Defaults to the tip of the default branch.'
+        required: false
+        type: string
+      message:
+        description: 'Tag annotation. Defaults to the tag name.'
+        required: false
+        type: string
+      create_release:
+        description: 'Also publish a GitHub release for this tag'
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          # Tags and every commit, so an arbitrary target SHA can be verified.
+          fetch-depth: 0
+
+      - name: Resolve and check the target
+        id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+
+          if ! printf '%s' "$INPUT_TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$INPUT_TAG' is not a vMAJOR.MINOR.PATCH[-prerelease] tag."
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$INPUT_TAG" >/dev/null; then
+            echo "::error::Tag '$INPUT_TAG' already exists. Delete it first if you mean to move it."
+            exit 1
+          fi
+
+          target="${INPUT_TARGET:-$(git rev-parse HEAD)}"
+          if ! git cat-file -e "${target}^{commit}" 2>/dev/null; then
+            echo "::error::'$target' is not a commit in this repository."
+            exit 1
+          fi
+          target=$(git rev-parse "${target}^{commit}")
+
+          # A tag pointing at a commit that never reached the default branch is
+          # almost always a mistake — a stale local SHA, or a branch that was
+          # rebased away.
+          default_branch="${{ github.event.repository.default_branch }}"
+          if ! git merge-base --is-ancestor "$target" "origin/$default_branch"; then
+            echo "::error::$target is not an ancestor of origin/$default_branch."
+            echo "::error::Tagging it would point the release at history that is not on the default branch."
+            exit 1
+          fi
+
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "Tagging $target"
+          git --no-pager log -1 --format='  %h %s' "$target"
+
+      - name: The four version sources agree with the tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          TARGET: ${{ steps.resolve.outputs.target }}
+        run: |
+          set -euo pipefail
+
+          # Read the versions as they were AT THE TAGGED COMMIT, not as they are
+          # now — tagging an older commit is legitimate, and comparing against
+          # the working tree would compare the wrong thing.
+          #
+          # This is the failure this check exists for: the four sources drifting
+          # apart, so a release claims a version that only three quarters of the
+          # tree actually carries. A pre-release suffix (v0.1.0-rc.1) is allowed
+          # to differ, since Python normalises 0.1.0-rc.1 to 0.1.0rc1 and the
+          # npm and Python spellings legitimately diverge.
+          version="${INPUT_TAG#v}"
+
+          read_at() { git show "${TARGET}:$1" 2>/dev/null || true; }
+
+          backend=$(read_at src/backend/pyproject.toml | awk -F'"' '/^version *=/ {print $2; exit}')
+          app_py=$(read_at src/App/pyproject.toml     | awk -F'"' '/^version *=/ {print $2; exit}')
+          mcp=$(read_at src/mcp_server/__init__.py    | awk -F'"' '/^__version__ *=/ {print $2; exit}')
+          app_js=$(read_at src/App/package.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)
+
+          echo "tag                        $version"
+          echo "src/backend/pyproject.toml $backend"
+          echo "src/App/pyproject.toml     $app_py"
+          echo "src/App/package.json       $app_js"
+          echo "src/mcp_server/__init__.py $mcp"
+
+          # Compare on the normalised form: strip separators and lowercase, so
+          # 0.1.0-rc.1, 0.1.0rc1 and 0.1.0.rc1 all compare equal.
+          #
+          # sed with an explicit class, not `tr -d '.-_'`: in tr that is the
+          # RANGE . to _, which deletes every digit and turns each version into
+          # a couple of letters that then miscompare. It read as a three-
+          # character set and silently was not one.
+          norm() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed 's/[._-]//g'; }
+          want=$(norm "$version")
+
+          mismatch=0
+          for pair in "backend:$backend" "app_py:$app_py" "app_js:$app_js" "mcp:$mcp"; do
+            name="${pair%%:*}"; value="${pair#*:}"
+            if [ -z "$value" ]; then
+              echo "::error::could not read a version for $name at $TARGET"
+              mismatch=1
+            elif [ "$(norm "$value")" != "$want" ]; then
+              echo "::error::$name is '$value' at $TARGET, but the tag claims '$version'"
+              mismatch=1
+            fi
+          done
+
+          if [ "$mismatch" -ne 0 ]; then
+            echo ""
+            echo "Refusing to tag: the commit does not carry the version the tag claims."
+            exit 1
+          fi
+
+          echo "All four version sources agree with $version."
+
+      - name: Create and push the annotated tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_MESSAGE: ${{ inputs.message }}
+          TARGET: ${{ steps.resolve.outputs.target }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$INPUT_TAG" "$TARGET" -m "${INPUT_MESSAGE:-$INPUT_TAG}"
+          git push origin "refs/tags/$INPUT_TAG"
+          echo "Pushed $INPUT_TAG -> $TARGET"
+
+      - name: Publish the release
+        if: ${{ inputs.create_release }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          # Prefer the matching CHANGELOG section as release notes; fall back to
+          # letting GitHub generate them from the commit range.
+          notes_args=(--generate-notes)
+          version="${INPUT_TAG#v}"
+          if [ -f CHANGELOG.md ] && grep -qE "^#{1,3} +\[?${version}\]?" CHANGELOG.md; then
+            awk -v ver="$version" '
+              $0 ~ "^#{1,3} +\\[?" ver "\\]?" { capture = 1; next }
+              capture && /^#{1,3} +\[?[0-9]/ { exit }
+              capture { print }
+            ' CHANGELOG.md > release-notes.md
+            if [ -s release-notes.md ]; then
+              notes_args=(--notes-file release-notes.md)
+              echo "Using the CHANGELOG section for $version."
+            fi
+          fi
+
+          if [ "$PRERELEASE" = "true" ]; then
+            notes_args+=(--prerelease)
+          fi
+
+          gh release create "$INPUT_TAG" --title "$INPUT_TAG" "${notes_args[@]}"
+
+      - name: Summary
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          TARGET: ${{ steps.resolve.outputs.target }}
+        run: |
+          {
+            echo "### Tag created"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Tag | \`$INPUT_TAG\` |"
+            echo "| Commit | \`$TARGET\` |"
+            echo "| Release | ${{ inputs.create_release && 'published' || 'not created' }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

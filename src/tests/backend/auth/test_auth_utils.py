@@ -78,6 +78,90 @@ class TestGetAuthenticatedUserDetails:
             # Verify logging was called regardless
             mock_log.assert_called_once_with("No user principal found in headers")
     
+    def test_no_sample_user_fallback_outside_dev(self):
+        """Outside APP_ENV=dev, a missing principal yields no identity at all.
+
+        The sample user's all-zeros principal must never stand in for a real
+        one in a deployed environment, or every unauthenticated caller shares
+        a single anonymous account. Callers check for a falsy
+        user_principal_id and reject the request.
+        """
+        from backend.auth import auth_utils
+
+        headers = {"content-type": "application/json"}
+
+        with patch.object(auth_utils.config, "APP_ENV", "prod"):
+            result = auth_utils.get_authenticated_user_details(headers)
+
+        assert result["user_principal_id"] is None
+        assert result["user_name"] is None
+        assert result["auth_token"] is None
+        assert result["client_principal_b64"] is None
+
+    def test_sample_user_fallback_still_applies_in_dev(self):
+        """APP_ENV=dev keeps the local-development sample user."""
+        from backend.auth import auth_utils
+
+        headers = {"content-type": "application/json"}
+
+        with patch.object(auth_utils.config, "APP_ENV", "dev"):
+            result = auth_utils.get_authenticated_user_details(headers)
+
+        assert result["user_principal_id"] == "00000000-0000-0000-0000-000000000000"
+        assert result["user_name"] == "testusername@constoso.com"
+
+    @staticmethod
+    def _principal_blob(oid, claim_type="http://schemas.microsoft.com/identity/claims/objectidentifier"):
+        """Build the base64 claims document an auth front door injects."""
+        payload = {
+            "auth_typ": "aad",
+            "claims": [{"typ": claim_type, "val": oid}],
+        }
+        return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+
+    def test_claims_blob_wins_over_the_scalar_id_header(self):
+        """The platform's claims document is the trustworthy identity.
+
+        x-ms-client-principal is injected by the auth front door after it
+        validates the token, and any client-supplied copy is stripped. The bare
+        x-ms-client-principal-id header looks identical whether the platform set
+        it or the caller did, so the blob takes precedence.
+        """
+        headers = {
+            "x-ms-client-principal": self._principal_blob("real-object-id"),
+            "x-ms-client-principal-id": "spoofed-id",
+        }
+
+        result = get_authenticated_user_details(headers)
+
+        assert result["user_principal_id"] == "real-object-id"
+
+    def test_falls_back_to_the_id_header_without_a_claims_blob(self):
+        """Front doors that emit only the scalar header keep working."""
+        headers = {"x-ms-client-principal-id": "plain-id"}
+
+        result = get_authenticated_user_details(headers)
+
+        assert result["user_principal_id"] == "plain-id"
+
+    def test_malformed_claims_blob_falls_back_rather_than_raising(self):
+        headers = {
+            "x-ms-client-principal": "not-valid-base64-json",
+            "x-ms-client-principal-id": "plain-id",
+        }
+
+        result = get_authenticated_user_details(headers)
+
+        assert result["user_principal_id"] == "plain-id"
+
+    def test_accepts_the_oid_short_claim_type(self):
+        """v2.0 tokens surface the object id as a bare 'oid' claim."""
+        headers = {"x-ms-client-principal": self._principal_blob("v2-oid", claim_type="oid")}
+
+        result = get_authenticated_user_details(headers)
+
+        assert result["user_principal_id"] == "v2-oid"
+
     def test_with_partial_auth_headers(self):
         """Test behavior with only some authentication headers present."""
         partial_headers = {

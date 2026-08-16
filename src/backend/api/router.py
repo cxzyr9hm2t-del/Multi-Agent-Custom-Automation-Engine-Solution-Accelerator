@@ -14,6 +14,12 @@ from common.database.database_factory import DatabaseFactory
 from common.models.messages import (InputTask, Plan, PlanStatus,
                                     TeamSelectionRequest)
 from common.utils.event_utils import track_event_if_configured
+from common.utils.utils_date import utc_now_iso
+from common.utils.resource_tokens import (DEFAULT_IMAGE_TTL_SECONDS,
+                                          DEFAULT_SOCKET_TTL_SECONDS,
+                                          PURPOSE_IMAGE, PURPOSE_SOCKET,
+                                          ResourceTokenError)
+from common.utils import resource_tokens
 from common.utils.team_utils import (find_first_available_team, rai_success,
                                      rai_validate_team_config)
 from fastapi import (APIRouter, BackgroundTasks, File, HTTPException, Query,
@@ -27,22 +33,138 @@ from services.team_service import TeamService
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# RFC 6455 close code for a message that violates policy — used here to refuse
+# a WebSocket handshake the caller is not authorized to make.
+WS_POLICY_VIOLATION = 1008
+
 app_router = APIRouter(
     prefix="/api/v4",
     responses={404: {"description": "Not found"}},
 )
 
 
+@app_router.post("/socket_token")
+async def issue_socket_token(request: Request, plan_id: str = Query(...)):
+    """Mint a short-lived token authorizing a WebSocket connection to a plan.
+
+    Browsers cannot set headers on a WebSocket handshake, so the socket cannot
+    present a bearer token. The client calls this endpoint over ordinary
+    authenticated HTTP, then passes the returned token as a query parameter on
+    the handshake. The token is bound to this user and this plan and expires
+    within a couple of minutes.
+    """
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    if not user_id:
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid user information"
+        )
+
+    memory_store = await DatabaseFactory.get_database(user_id=user_id)
+    plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    return {
+        "token": resource_tokens.mint(
+            PURPOSE_SOCKET, plan_id, user_id, DEFAULT_SOCKET_TTL_SECONDS
+        ),
+        "expires_in": DEFAULT_SOCKET_TTL_SECONDS,
+    }
+
+
+@app_router.post("/image_token")
+async def issue_image_token(request: Request):
+    """Mint a short-lived token for loading generated images.
+
+    Generated images are rendered through a plain ``<img src>``, which carries
+    no headers. The frontend appends this token to the image URL.
+
+    The token proves the requester is an authenticated user; it does not prove
+    they own the specific image, because generated blobs carry no ownership
+    record (see the image proxy handler). It closes anonymous access, not
+    cross-user access.
+    """
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    if not user_id:
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid user information"
+        )
+
+    return {
+        "token": resource_tokens.mint(
+            PURPOSE_IMAGE, "", user_id, DEFAULT_IMAGE_TTL_SECONDS
+        ),
+        "expires_in": DEFAULT_IMAGE_TTL_SECONDS,
+    }
+
+
 @app_router.websocket("/socket/{process_id}")
 async def start_comms(
-    websocket: WebSocket, process_id: str, user_id: str = Query(None)
+    websocket: WebSocket,
+    process_id: str,
+    user_id: str = Query(None),
+    token: str = Query(None),
 ):
-    """Web-Socket endpoint for real-time process status updates."""
+    """Web-Socket endpoint for real-time process status updates.
 
-    # Always accept the WebSocket connection first
+    This socket streams a plan's whole orchestration — agent reasoning, tool
+    calls, plan content and the final result — so it is authorized before it is
+    accepted. ``process_id`` is the plan id (see WebSocketService.buildSocketUrl
+    in the frontend), and the plan lookup is scoped to ``user_id``, so a plan the
+    caller does not own does not resolve and the handshake is refused.
+    """
+    # Authorize BEFORE accepting. Closing an un-accepted WebSocket fails the
+    # handshake outright rather than opening a stream and then dropping it.
+    #
+    # A signed token is the strong path: it is issued by /socket_token to an
+    # authenticated caller and bound to this plan, so it establishes identity
+    # rather than merely asserting it. A bare user_id remains accepted for
+    # deployments with no front door in front of the API, where it is no weaker
+    # than the header scheme the rest of the API uses.
+    if token:
+        try:
+            user_id = resource_tokens.verify(token, PURPOSE_SOCKET, process_id)
+        except ResourceTokenError as exc:
+            logging.warning(
+                "[websocket] Refused connection to '%s': %s", process_id, exc
+            )
+            await websocket.close(code=WS_POLICY_VIOLATION)
+            return
+    elif not user_id:
+        logging.info(
+            "[websocket] Refused connection to '%s': no token or user_id supplied",
+            process_id,
+        )
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return
+
+    try:
+        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        plan = await memory_store.get_plan_by_plan_id(plan_id=process_id)
+    except Exception as e:
+        # Fail closed: an authorization check that cannot run has not passed.
+        logging.error(
+            "[websocket] Refused connection to '%s': authorization check failed: %s",
+            process_id, e,
+        )
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return
+
+    if plan is None:
+        logging.warning(
+            "[websocket] Refused connection: user '%s' does not own plan '%s'",
+            user_id, process_id,
+        )
+        track_event_if_configured(
+            "Error_WebSocket_Forbidden",
+            {"process_id": process_id, "user_id": user_id},
+        )
+        await websocket.close(code=WS_POLICY_VIOLATION)
+        return
+
     await websocket.accept()
-
-    user_id = user_id or "00000000-0000-0000-0000-000000000000"
 
     # Manually create a span for WebSocket since excluded_urls suppresses auto-instrumentation.
     # Without this, all track_event_if_configured calls inside WebSocket would get operation_Id = 0.
@@ -51,17 +173,9 @@ async def start_comms(
         "WebSocket_Connection",
         attributes={"process_id": process_id, "user_id": user_id},
     ) as ws_span:
-        # Resolve session_id from plan for telemetry
-        session_id = None
-        try:
-            memory_store = await DatabaseFactory.get_database(user_id=user_id)
-            plan = await memory_store.get_plan_by_plan_id(plan_id=process_id)
-            if plan:
-                session_id = getattr(plan, 'session_id', None)
-                if session_id:
-                    ws_span.set_attribute("session_id", session_id)
-        except Exception as e:
-            logging.warning(f"[websocket] Failed to resolve session_id: {e}")
+        session_id = getattr(plan, 'session_id', None)
+        if session_id:
+            ws_span.set_attribute("session_id", session_id)
 
         # Add to the connection manager for backend updates
         connection_config.add_connection(
@@ -85,7 +199,7 @@ async def start_comms(
                         json.dumps(
                             {
                                 "type": WebsocketMessageType.PING,
-                                "data": {"ts": asyncio.get_event_loop().time()},
+                                "data": {"ts": utc_now_iso()},
                             },
                             default=str,
                         )
@@ -307,6 +421,10 @@ async def process_request(
                 status_code=404,
                 detail=f"Team configuration '{team_id}' not found or access denied",
             )
+    except HTTPException:
+        # The 404 above is deliberate; re-raise it rather than folding it into
+        # the generic 400 below.
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -542,6 +660,30 @@ async def plan_approval(
                 orchestration_config
                 and human_feedback.m_plan_id in orchestration_config.approvals
             ):
+                # Membership in `approvals` proves the id is live, not that it
+                # belongs to the caller. Without this check any user holding a
+                # pending m_plan_id could approve someone else's plan and
+                # release their agent workflow to execute.
+                owner = orchestration_config.approval_owner(human_feedback.m_plan_id)
+                if owner != user_id:
+                    logger.warning(
+                        "Rejected approval of plan '%s' by user '%s' (owner: %s)",
+                        human_feedback.m_plan_id,
+                        user_id,
+                        owner if owner else "unrecorded",
+                    )
+                    track_event_if_configured(
+                        "Error_Plan_Approval_Forbidden",
+                        {
+                            "m_plan_id": human_feedback.m_plan_id,
+                            "user_id": user_id,
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail="This plan does not belong to you.",
+                    )
+
                 orchestration_config.set_approval_result(
                     human_feedback.m_plan_id, human_feedback.approved
                 )
@@ -561,7 +703,7 @@ async def plan_approval(
                             "data": {
                                 "content": "Approval failed due to invalid input.",
                                 "status": "error",
-                                "timestamp": asyncio.get_event_loop().time(),
+                                "timestamp": utc_now_iso(),
                             },
                         },
                         user_id,
@@ -576,7 +718,7 @@ async def plan_approval(
                             "data": {
                                 "content": "An unexpected error occurred while processing the approval.",
                                 "status": "error",
-                                "timestamp": asyncio.get_event_loop().time(),
+                                "timestamp": utc_now_iso(),
                             },
                         },
                         user_id,
@@ -606,6 +748,11 @@ async def plan_approval(
                 raise HTTPException(
                     status_code=404, detail="No active plan found for approval"
                 )
+    except HTTPException:
+        # Deliberate status codes (403 not yours, 404 no such pending plan) must
+        # reach the client as themselves. The catch-all below would otherwise
+        # turn every one of them into a 500.
+        raise
     except Exception as e:
         logging.error(f"Error processing plan approval: {e}")
         try:
@@ -615,7 +762,7 @@ async def plan_approval(
                     "data": {
                         "content": "An error occurred while processing your approval request.",
                         "status": "error",
-                        "timestamp": asyncio.get_event_loop().time(),
+                        "timestamp": utc_now_iso(),
                     },
                 },
                 user_id,
@@ -637,22 +784,55 @@ async def plan_approval(
 async def clarification_ask(request: Request):
     """Synchronous bridge for the MCP ``ask_user`` tool.
 
-    The MCP server POSTs ``{question, user_id}`` here. This endpoint:
+    The MCP server POSTs ``{question, session_token}`` here. This endpoint:
     1. Sends a ``USER_CLARIFICATION_REQUEST`` to the user via WebSocket.
     2. Blocks until the user responds (or the request times out).
     3. Returns ``{answer}`` so the MCP tool can pass it back to the agent.
+
+    **Who gets asked is decided here, not by the caller.** The endpoint used to
+    take a ``user_id`` from the body, which the model had copied out of its
+    prompt — so the delivery target of a clarification was chosen by model
+    output, and anything able to reach this endpoint could put a question in an
+    arbitrary user's browser. The caller now presents a token minted by
+    ``AgentFactory`` when it built the agent, and the user is read from the
+    token's signed payload. An unsigned, tampered, expired or absent token is
+    refused.
+
+    In ``APP_ENV=dev`` a bare ``user_id`` is still accepted, so the bridge can
+    be exercised with curl against a local backend. Outside dev it is ignored
+    even when present.
     """
     body = await request.json()
     question = body.get("question", "")
-    user_id = body.get("user_id", "")
+    session_token = body.get("session_token", "")
 
-    if not question or not user_id:
-        raise HTTPException(status_code=400, detail="question and user_id are required")
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+
+    if session_token:
+        try:
+            user_id = resource_tokens.verify(
+                session_token, resource_tokens.PURPOSE_CLARIFY, ""
+            )
+        except resource_tokens.ResourceTokenError as exc:
+            logger.warning("clarification/ask: rejected session token: %s", exc)
+            raise HTTPException(
+                status_code=401, detail="Invalid or expired session token."
+            )
+    elif config.APP_ENV == "dev" and body.get("user_id"):
+        user_id = body["user_id"]
+        logger.warning(
+            "clarification/ask: accepting an unsigned user_id because APP_ENV=dev. "
+            "This path does not exist outside development."
+        )
+    else:
+        raise HTTPException(status_code=401, detail="A session token is required.")
 
     request_id = str(uuid.uuid4())
 
-    # Register the pending clarification in orchestration state
-    orchestration_config.set_clarification_pending(request_id)
+    # Register the pending clarification in orchestration state, owned by the
+    # user being asked — only they may answer it.
+    orchestration_config.set_clarification_pending(request_id, user_id=user_id)
 
     # Send the question to the user's browser via WebSocket
     clarification_request = messages.UserClarificationRequest(
@@ -762,6 +942,10 @@ async def user_clarification(
                 status_code=404,
                 detail=f"Team configuration '{team_id}' not found or access denied",
             )
+    except HTTPException:
+        # The 404 above is deliberate; re-raise it rather than folding it into
+        # the generic 400 below.
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -800,6 +984,30 @@ async def user_clarification(
             orchestration_config
             and human_feedback.request_id in orchestration_config.clarifications
         ):
+            # The request_id travels to the browser over the WebSocket, so
+            # holding one proves nothing about who the question was put to.
+            owner = orchestration_config.clarification_owner(
+                human_feedback.request_id
+            )
+            if owner != user_id:
+                logger.warning(
+                    "Rejected clarification '%s' by user '%s' (owner: %s)",
+                    human_feedback.request_id,
+                    user_id,
+                    owner if owner else "unrecorded",
+                )
+                track_event_if_configured(
+                    "Error_Clarification_Forbidden",
+                    {
+                        "request_id": human_feedback.request_id,
+                        "user_id": user_id,
+                    },
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="This clarification request does not belong to you.",
+                )
+
             # Use the new event-driven method to set clarification result
             orchestration_config.set_clarification_result(
                 human_feedback.request_id, human_feedback.answer
@@ -893,21 +1101,46 @@ async def agent_message_user(
             status_code=401, detail="Missing or invalid user information"
         )
 
-    # Attach session_id to span if plan_id is available and capture for events
-    session_id = None
-    if agent_message.plan_id:
-        try:
-            memory_store = await DatabaseFactory.get_database(user_id=user_id)
-            plan = await memory_store.get_plan_by_plan_id(plan_id=agent_message.plan_id)
-            if plan and plan.session_id:
-                session_id = plan.session_id
-                span = trace.get_current_span()
-                if span:
-                    span.set_attribute("session_id", session_id)
-        except Exception:
-            pass  # Don't fail request if span attribute fails
+    # Authorize the write against the plan it targets.
+    #
+    # This handler appends to a plan's message stream and, on is_final, marks
+    # the plan completed with caller-supplied content. Without an ownership
+    # check any caller could forge agent output into someone else's transcript
+    # and close their plan out. The plan lookup is user-scoped, so a plan the
+    # caller does not own does not resolve.
+    if not agent_message.plan_id:
+        raise HTTPException(
+            status_code=400,
+            detail="plan_id is required to record an agent message",
+        )
 
-    # Set the approval in the orchestration config
+    try:
+        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        plan = await memory_store.get_plan_by_plan_id(plan_id=agent_message.plan_id)
+    except Exception as e:
+        # Fail closed: an authorization check that cannot run has not passed.
+        logger.error(
+            "Agent message authorization check failed for plan '%s': %s",
+            agent_message.plan_id, e,
+        )
+        raise HTTPException(status_code=500, detail="Internal server error") from e
+
+    if plan is None:
+        logger.warning(
+            "Rejected agent message for plan '%s' from user '%s'",
+            agent_message.plan_id, user_id,
+        )
+        track_event_if_configured(
+            "Error_Agent_Message_Forbidden",
+            {"plan_id": agent_message.plan_id, "user_id": user_id},
+        )
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    session_id = plan.session_id or None
+    if session_id:
+        span = trace.get_current_span()
+        if span:
+            span.set_attribute("session_id", session_id)
 
     try:
 
@@ -977,6 +1210,10 @@ async def upload_team_config(
     try:
         memory_store = await DatabaseFactory.get_database(user_id=user_id)
 
+    except HTTPException:
+        # The 404 above is deliberate; re-raise it rather than folding it into
+        # the generic 400 below.
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -999,20 +1236,25 @@ async def upload_team_config(
                 status_code=400, detail=f"Invalid JSON format: {str(e)}"
             ) from e
 
-        # Validate content with RAI before processing
-        if not team_id:
-            rai_valid, rai_error = await rai_validate_team_config(json_data, memory_store)
-            if not rai_valid:
-                track_event_if_configured(
-                    "Error_Config_RAI_Validation_Failed",
-                    {
-                        "status": "failed",
-                        "user_id": user_id,
-                        "filename": file.filename,
-                        "reason": rai_error,
-                    },
-                )
-                raise HTTPException(status_code=400, detail=rai_error)
+        # Validate content with RAI before processing.
+        #
+        # This runs on every upload, including updates. It was previously guarded
+        # by `if not team_id:`, so supplying any team_id skipped the check
+        # entirely — and a team configuration carries each agent's
+        # system_message, which is exactly the unvetted content this exists to
+        # screen before it reaches an agent's system prompt.
+        rai_valid, rai_error = await rai_validate_team_config(json_data, memory_store)
+        if not rai_valid:
+            track_event_if_configured(
+                "Error_Config_RAI_Validation_Failed",
+                {
+                    "status": "failed",
+                    "user_id": user_id,
+                    "filename": file.filename,
+                    "reason": rai_error,
+                },
+            )
+            raise HTTPException(status_code=400, detail=rai_error)
 
         track_event_if_configured(
             "Config_RAI_Validation_Passed",
@@ -1081,13 +1323,26 @@ async def upload_team_config(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-        # Save the configuration
+        # Save the configuration.
+        #
+        # An update must go through update_team_configuration rather than
+        # overwriting the ids on the parsed document and inserting it: the
+        # freshly generated session_id is the partition key, so an insert lands
+        # a duplicate of the same team_id in a different partition instead of
+        # replacing the original.
         try:
-            logger.debug("Saving team configuration for team_id=%s", team_id)
             if team_id:
-                team_configuration.team_id = team_id
-                team_configuration.id = team_id  # Ensure id is also set for updates
-            team_id = await team_service.save_team_configuration(team_configuration)
+                logger.debug("Updating team configuration for team_id=%s", team_id)
+                team_id = await team_service.update_team_configuration(
+                    team_id, team_configuration
+                )
+            else:
+                logger.debug("Creating a new team configuration")
+                team_id = await team_service.save_team_configuration(team_configuration)
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to save configuration: {str(e)}"
@@ -1473,16 +1728,69 @@ async def get_plan_by_id(
                 "GetPlanId", {"status_code": 400, "detail": "no plan id"}
             )
             raise HTTPException(status_code=400, detail="no plan id")
+    except HTTPException:
+        # 404 "Plan not found" and 400 "no plan id" are deliberate; the
+        # catch-all below would otherwise report both as a 500.
+        raise
     except Exception as e:
         logging.error(f"Error retrieving plan: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error occurred")
 
 
 @app_router.get("/images/{blob_name:path}")
-async def get_generated_image(blob_name: str):
-    """Proxy a generated image from Azure Blob Storage."""
+async def get_generated_image(blob_name: str, token: str = Query(None)):
+    """Proxy a generated image from Azure Blob Storage.
+
+    AUTHORIZATION: the browser loads these through a plain ``<img src>`` in the
+    markdown renderer, which carries no headers, so the principal-header scheme
+    the rest of the API uses cannot apply. A short-lived token from
+    ``/image_token`` travels in the query string instead.
+
+    The token proves the requester is an authenticated user. It does **not**
+    prove they own this particular image: generated blobs are stored under a
+    ``uuid4`` name with no ownership record, so there is nothing to check
+    against. This closes anonymous access, not cross-user access. Recording an
+    owner at generation time (``mcp_server/services/image_service.py``) is what
+    would allow the stronger check.
+
+    Tokens are optional so that deployments without the authenticating front
+    door keep working; when one is supplied it must be valid.
+    """
     from azure.storage.blob import BlobServiceClient
     from fastapi.responses import Response
+
+    if token:
+        try:
+            requester = resource_tokens.verify(token, PURPOSE_IMAGE, "")
+        except ResourceTokenError as exc:
+            logging.warning("Rejected image request for '%s': %s", blob_name, exc)
+            raise HTTPException(status_code=403, detail="Invalid or expired token")
+
+        # Check the requester against the recorded owner. Images generated
+        # before ownership was recorded have no entry; those fall back to
+        # token-only protection rather than breaking, so existing conversations
+        # keep rendering.
+        try:
+            memory_store = await DatabaseFactory.get_database(user_id=requester)
+            owner = await memory_store.get_image_asset(blob_name)
+        except Exception as exc:
+            logging.error("Image ownership lookup failed for '%s': %s", blob_name, exc)
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+        if owner is not None and owner.user_id != requester:
+            logging.warning(
+                "Rejected image '%s': owned by another user, requested by '%s'",
+                blob_name, requester,
+            )
+            track_event_if_configured(
+                "Error_Image_Forbidden",
+                {"blob_name": blob_name, "user_id": requester},
+            )
+            raise HTTPException(status_code=403, detail="Image not found")
+        if owner is None:
+            logging.info(
+                "Image '%s' has no ownership record; allowing on token alone", blob_name
+            )
 
     blob_url = config.AZURE_STORAGE_BLOB_URL
     container = config.AZURE_STORAGE_IMAGES_CONTAINER
@@ -1500,7 +1808,17 @@ async def get_generated_image(blob_name: str):
         blob_client = blob_service.get_blob_client(container=container, blob=blob_name)
         stream = blob_client.download_blob()
         data = stream.readall()
-        return Response(content=data, media_type="image/png")
+        return Response(
+            content=data,
+            media_type="image/png",
+            headers={
+                # The URL is the only secret protecting this content, so keep it
+                # out of shared caches and off referrers to other origins.
+                "Cache-Control": "private, no-store",
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     except Exception as exc:
         logging.error(f"Error retrieving image '{blob_name}': {exc}")
         raise HTTPException(status_code=404, detail="Image not found")

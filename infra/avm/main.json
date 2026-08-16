@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "10080544909430391861"
+      "templateHash": "14289405380607557127"
     },
     "name": "Multi-Agent Custom Automation Engine - AVM",
     "description": "AVM orchestrator for the Multi-Agent Custom Automation Engine accelerator. Deploys the same logical resources and preserves the same outputs as infra\\main.bicep using local AVM wrapper modules."
@@ -280,6 +280,13 @@
       "defaultValue": false,
       "metadata": {
         "description": "Optional. Enable scalability for applicable resources, aligned with the Well Architected Framework recommendations. Defaults to false."
+      }
+    },
+    "backendAuthClientId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token."
       }
     },
     "enableRedundancy": {
@@ -687,7 +694,7 @@
     "aiSearchIndexNameForRFPSummary": "macae-rfp-summary-index",
     "aiSearchIndexNameForRFPRisk": "macae-rfp-risk-index",
     "aiSearchIndexNameForRFPCompliance": "macae-rfp-compliance-index",
-    "virtualMachineAvailabilityZone": 1,
+    "virtualMachineAvailabilityZone": -1,
     "aiFoundryOpenAIEndpoint": "[format('https://{0}.openai.azure.com/', variables('aiFoundryAiServicesResourceName'))]"
   },
   "resources": {
@@ -28583,7 +28590,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "10180502016624897684"
+              "templateHash": "13733831222630151234"
             }
           },
           "parameters": {
@@ -28609,7 +28616,7 @@
             "modelName": {
               "type": "string",
               "metadata": {
-                "description": "Required. Model name (e.g., gpt-4o, text-embedding-ada-002)."
+                "description": "Required. Model name (e.g., gpt-5.4-mini, text-embedding-ada-002)."
               }
             },
             "modelVersion": {
@@ -54862,6 +54869,9 @@
           "ingressTargetPort": {
             "value": 8000
           },
+          "authClientId": {
+            "value": "[parameters('backendAuthClientId')]"
+          },
           "ingressAllowInsecure": {
             "value": false
           },
@@ -54901,7 +54911,7 @@
           "scaleSettings": {
             "value": {
               "minReplicas": 1,
-              "maxReplicas": "[if(parameters('enableScalability'), 3, 1)]"
+              "maxReplicas": 1
             }
           },
           "containers": {
@@ -55047,7 +55057,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "10535819316717631477"
+              "templateHash": "16780218873755511174"
             }
           },
           "parameters": {
@@ -55196,6 +55206,20 @@
               "metadata": {
                 "description": "Optional. Bool indicating if the Container App should enable session affinity."
               }
+            },
+            "authClientId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour."
+              }
+            },
+            "authTenantId": {
+              "type": "string",
+              "defaultValue": "[tenant().tenantId]",
+              "metadata": {
+                "description": "Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant."
+              }
             }
           },
           "resources": {
@@ -55259,7 +55283,8 @@
                   },
                   "stickySessionsAffinity": {
                     "value": "[parameters('stickySessionsAffinity')]"
-                  }
+                  },
+                  "authConfig": "[if(empty(parameters('authClientId')), createObject('value', createObject()), createObject('value', createObject('platform', createObject('enabled', true()), 'globalValidation', createObject('unauthenticatedClientAction', 'Return401'), 'identityProviders', createObject('azureActiveDirectory', createObject('enabled', true(), 'registration', createObject('openIdIssuer', format('https://login.microsoftonline.com/{0}/v2.0', parameters('authTenantId')), 'clientId', parameters('authClientId')), 'validation', createObject('allowedAudiences', createArray(format('api://{0}', parameters('authClientId')), parameters('authClientId'))))))))]"
                 },
                 "template": {
                   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -56860,7 +56885,7 @@
             "value": "[reference('containerAppEnvironment').outputs.resourceId.value]"
           },
           "ingressExternal": {
-            "value": true
+            "value": false
           },
           "ingressTargetPort": {
             "value": 9000
@@ -56967,8 +56992,16 @@
                     "value": "[parameters('gptImageModelName')]"
                   },
                   {
+                    "name": "AZURE_OPENAI_IMAGE_QUALITY",
+                    "value": "high"
+                  },
+                  {
                     "name": "AZURE_STORAGE_BLOB_URL",
                     "value": "[reference('storage_account').outputs.blobEndpoint.value]"
+                  },
+                  {
+                    "name": "AZURE_STORAGE_IMAGES_CONTAINER",
+                    "value": "generated-images"
                   },
                   {
                     "name": "BACKEND_URL",
@@ -56987,7 +57020,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "10535819316717631477"
+              "templateHash": "16780218873755511174"
             }
           },
           "parameters": {
@@ -57136,6 +57169,20 @@
               "metadata": {
                 "description": "Optional. Bool indicating if the Container App should enable session affinity."
               }
+            },
+            "authClientId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour."
+              }
+            },
+            "authTenantId": {
+              "type": "string",
+              "defaultValue": "[tenant().tenantId]",
+              "metadata": {
+                "description": "Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant."
+              }
             }
           },
           "resources": {
@@ -57199,7 +57246,8 @@
                   },
                   "stickySessionsAffinity": {
                     "value": "[parameters('stickySessionsAffinity')]"
-                  }
+                  },
+                  "authConfig": "[if(empty(parameters('authClientId')), createObject('value', createObject()), createObject('value', createObject('platform', createObject('enabled', true()), 'globalValidation', createObject('unauthenticatedClientAction', 'Return401'), 'identityProviders', createObject('azureActiveDirectory', createObject('enabled', true(), 'registration', createObject('openIdIssuer', format('https://login.microsoftonline.com/{0}/v2.0', parameters('authTenantId')), 'clientId', parameters('authClientId')), 'validation', createObject('allowedAudiences', createArray(format('api://{0}', parameters('authClientId')), parameters('authClientId'))))))))]"
                 },
                 "template": {
                   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -59690,7 +59738,6 @@
             "value": {
               "SCM_DO_BUILD_DURING_DEPLOYMENT": "true",
               "DOCKER_REGISTRY_SERVER_URL": "[format('https://{0}', if(variables('useExistingContainerRegistry'), format('{0}.azurecr.io', variables('existingContainerRegistryName')), reference('container_registry').outputs.loginServer.value))]",
-              "WEBSITES_PORT": "3000",
               "WEBSITES_CONTAINER_START_TIME_LIMIT": "1800",
               "BACKEND_API_URL": "[format('https://{0}', reference('containerApp').outputs.fqdn.value)]",
               "AUTH_ENABLED": "false",
@@ -59698,6 +59745,12 @@
             }
           },
           "virtualNetworkSubnetId": "[if(parameters('enablePrivateNetworking'), createObject('value', reference('virtualNetwork').outputs.webserverfarmSubnetResourceId.value), createObject('value', ''))]",
+          "vnetRouteAllEnabled": {
+            "value": "[parameters('enablePrivateNetworking')]"
+          },
+          "imagePullTraffic": {
+            "value": "[parameters('enablePrivateNetworking')]"
+          },
           "publicNetworkAccess": {
             "value": "Enabled"
           },
@@ -59712,7 +59765,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "9621160936099183182"
+              "templateHash": "9504607717010385151"
             }
           },
           "definitions": {
@@ -60250,6 +60303,40 @@
             }
           },
           "resources": {
+            "site": {
+              "existing": true,
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2025-03-01",
+              "name": "[parameters('name')]"
+            },
+            "logsConfig": {
+              "type": "Microsoft.Web/sites/config",
+              "apiVersion": "2025-03-01",
+              "name": "[format('{0}/{1}', parameters('name'), 'logs')]",
+              "properties": {
+                "applicationLogs": {
+                  "fileSystem": {
+                    "level": "Verbose"
+                  }
+                },
+                "detailedErrorMessages": {
+                  "enabled": true
+                },
+                "failedRequestsTracing": {
+                  "enabled": true
+                },
+                "httpLogs": {
+                  "fileSystem": {
+                    "enabled": true,
+                    "retentionInDays": 1,
+                    "retentionInMb": 35
+                  }
+                }
+              },
+              "dependsOn": [
+                "appService"
+              ]
+            },
             "appService": {
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
@@ -60293,6 +60380,7 @@
                       "healthCheckPath": "[if(not(empty(parameters('healthCheckPath'))), parameters('healthCheckPath'), null())]",
                       "webSocketsEnabled": "[parameters('webSocketsEnabled')]",
                       "appCommandLine": "[parameters('appCommandLine')]",
+                      "vnetRouteAllEnabled": "[parameters('vnetRouteAllEnabled')]",
                       "acrUseManagedIdentityCreds": "[not(empty(parameters('acrUserManagedIdentityClientId')))]",
                       "acrUserManagedIdentityID": "[if(not(empty(parameters('acrUserManagedIdentityClientId'))), parameters('acrUserManagedIdentityClientId'), null())]"
                     }
@@ -60306,35 +60394,6 @@
                         "name": "appsettings",
                         "properties": "[parameters('appSettings')]",
                         "applicationInsightResourceId": "[if(not(empty(parameters('applicationInsightResourceId'))), parameters('applicationInsightResourceId'), null())]"
-                      },
-                      {
-                        "name": "logs",
-                        "properties": {
-                          "applicationLogs": {
-                            "fileSystem": {
-                              "level": "Verbose"
-                            }
-                          },
-                          "detailedErrorMessages": {
-                            "enabled": true
-                          },
-                          "failedRequestsTracing": {
-                            "enabled": true
-                          },
-                          "httpLogs": {
-                            "fileSystem": {
-                              "enabled": true,
-                              "retentionInDays": 1,
-                              "retentionInMb": 35
-                            }
-                          }
-                        }
-                      },
-                      {
-                        "name": "web",
-                        "properties": {
-                          "vnetRouteAllEnabled": "[parameters('vnetRouteAllEnabled')]"
-                        }
                       }
                     ]
                   },

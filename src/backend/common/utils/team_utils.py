@@ -1,5 +1,6 @@
 """Utility functions for agent_framework-based integration and agent management."""
 
+import asyncio
 import logging
 import uuid
 from common.config.app_config import config
@@ -87,6 +88,12 @@ async def create_RAI_agent(
     )
 
     model_deployment_name = config.AZURE_OPENAI_RAI_DEPLOYMENT_NAME
+
+    # Work on a copy. `team` is the caller's TeamConfiguration — in the request
+    # path it is the document just read from Cosmos — and renaming it in place
+    # to "RAI Team" leaves those values on an object the caller may go on to
+    # persist.
+    team = team.model_copy(deep=True) if hasattr(team, "model_copy") else team
     team.team_id = "rai_team"  # Use a fixed team ID for RAI agent
     team.name = "RAI Team"
     team.description = "Team responsible for Responsible AI checks"
@@ -122,24 +129,71 @@ async def _get_agent_response(agent: AgentTemplate, query: str) -> str:
     For agent_framework streaming:
       - Each update may have .text
       - Or tool/content items in update.contents with .text
+
+    Raises whatever the stream raises. This used to swallow the error and
+    return the literal "TRUE" so the caller would read it as "unsafe, block" —
+    which blocks correctly but makes an infrastructure failure indistinguishable
+    from a real classification, and leaves the caller unable to tell that the
+    agent itself is broken. ``rai_success`` still fails closed; it just knows
+    why now.
     """
     parts: list[str] = []
-    try:
-        async for message in agent.invoke(query):
-            # Prefer direct text
-            if hasattr(message, "text") and message.text:
-                parts.append(str(message.text))
-            # Fallback to contents (tool calls, chunks)
-            contents = getattr(message, "contents", None)
-            if contents:
-                for item in contents:
-                    txt = getattr(item, "text", None)
-                    if txt:
-                        parts.append(str(txt))
-        return "".join(parts) if parts else ""
-    except Exception as e:
-        logging.error("Error streaming agent response: %s", e)
-        return "TRUE"  # Default to blocking on error
+    async for message in agent.invoke(query):
+        # Prefer direct text
+        if hasattr(message, "text") and message.text:
+            parts.append(str(message.text))
+        # Fallback to contents (tool calls, chunks)
+        contents = getattr(message, "contents", None)
+        if contents:
+            for item in contents:
+                txt = getattr(item, "text", None)
+                if txt:
+                    parts.append(str(txt))
+    return "".join(parts) if parts else ""
+
+
+# The RAI classifier is a single stateless agent reused for the lifetime of the
+# process. It used to be created in Azure AI Foundry and deleted again on every
+# check — that is, on every user message and every clarification answer — which
+# put a remote agent create/delete on the critical path of each request and
+# churned Foundry quota for no benefit.
+#
+# The annotation is quoted deliberately: a module-level variable annotation is
+# evaluated at import time, and AgentTemplate is replaced by a Mock in parts of
+# the test suite, where `Mock | None` raises TypeError.
+_rai_agent: "AgentTemplate | None" = None
+_rai_agent_lock = asyncio.Lock()
+
+
+async def _get_or_create_rai_agent(
+    team_config: TeamConfiguration, memory_store: DatabaseBase
+) -> "AgentTemplate | None":
+    """Return the shared RAI agent, creating it on first use."""
+    global _rai_agent
+    if _rai_agent is not None:
+        return _rai_agent
+
+    async with _rai_agent_lock:
+        # Re-check: another request may have built it while we waited.
+        if _rai_agent is None:
+            _rai_agent = await create_RAI_agent(team_config, memory_store)
+        return _rai_agent
+
+
+async def reset_rai_agent() -> None:
+    """Drop the shared RAI agent so the next check rebuilds it.
+
+    Called when a check fails against the cached agent. Without this a single
+    wedged agent would block every subsequent request for the life of the
+    process, since the classifier fails closed.
+    """
+    global _rai_agent
+    agent, _rai_agent = _rai_agent, None
+    if agent is not None:
+        try:
+            await agent.close()
+        except Exception as exc:
+            logging.debug("Error closing RAI agent during reset: %s", exc)
 
 
 async def rai_success(
@@ -149,33 +203,38 @@ async def rai_success(
     Run a RAI compliance check on the provided description using the RAIAgent.
     Returns True if content is safe (should proceed), False if it should be blocked.
     """
-    agent: AgentTemplate | None = None
     try:
-        agent = await create_RAI_agent(team_config, memory_store)
+        agent = await _get_or_create_rai_agent(team_config, memory_store)
         if not agent:
             logging.error("Failed to instantiate RAIAgent.")
             return False
 
         response_text = await _get_agent_response(agent, description)
-        verdict = response_text.strip().upper()
-
-        if "FALSE" in verdict:  # any false in the response
-            logging.info("RAI check passed.")
-            return True
-        else:
-            logging.info("RAI check failed (blocked). Sample: %s...", description[:60])
-            return False
-
     except Exception as e:
+        # Fail closed, and discard the agent so one bad instance does not block
+        # every future check.
         logging.error("RAI check error: %s — blocking by default.", e)
+        await reset_rai_agent()
         return False
-    finally:
-        # Ensure we close resources
-        if agent:
-            try:
-                await agent.close()
-            except Exception:
-                pass
+
+    # The classifier is instructed to answer with exactly one word. Accept only
+    # an unambiguous verdict: previously any response *containing* "FALSE"
+    # passed, so "the content is safe, but FALSE positives are possible" would
+    # have let content through. Anything unrecognised blocks.
+    verdict = "".join(ch for ch in response_text.upper() if ch.isalpha())
+
+    if verdict == "FALSE":
+        logging.info("RAI check passed.")
+        return True
+
+    if verdict != "TRUE":
+        logging.warning(
+            "RAI classifier returned an unrecognised verdict %r — blocking.",
+            response_text[:120],
+        )
+
+    logging.info("RAI check failed (blocked). Sample: %s...", description[:60])
+    return False
 
 
 async def rai_validate_team_config(

@@ -36,6 +36,7 @@ from backend.common.utils.utils_date import (
     DateTimeEncoder,
     format_date_for_user,
     format_dates_in_messages,
+    utc_now_iso,
 )
 
 # Now patch the parser in the actual module to work correctly
@@ -551,6 +552,43 @@ class TestUtilsDateIntegration(unittest.TestCase):
         parsed_output = json.loads(json_output)
         self.assertIn("message", parsed_output)
         self.assertEqual(parsed_output["created_at"], "2023-07-30T14:30:00")
+
+
+class TestUtcNowIso(unittest.TestCase):
+    """The single source of wall-clock time for anything sent to the browser."""
+
+    def test_returns_a_parseable_iso_string(self):
+        from datetime import datetime as real_datetime
+
+        value = utc_now_iso()
+        self.assertIsInstance(value, str)
+        parsed = real_datetime.fromisoformat(value)
+        self.assertIsNotNone(parsed.tzinfo)
+
+    def test_is_utc_and_carries_an_explicit_offset(self):
+        """A naive string would be read as local time by whoever parses it."""
+        from datetime import datetime as real_datetime, timezone as real_tz
+
+        parsed = real_datetime.fromisoformat(utc_now_iso())
+        self.assertEqual(parsed.utcoffset(), real_tz.utc.utcoffset(None))
+
+    def test_is_close_to_now(self):
+        """Guards against a monotonic clock being substituted again.
+
+        asyncio's event-loop clock counts from an arbitrary origin, so a value
+        taken from it lands decades away from the real instant.
+        """
+        from datetime import datetime as real_datetime, timezone as real_tz
+
+        parsed = real_datetime.fromisoformat(utc_now_iso())
+        delta = abs((real_datetime.now(real_tz.utc) - parsed).total_seconds())
+        self.assertLess(delta, 60)
+
+    def test_is_not_a_bare_epoch_number(self):
+        """The value must not be something JavaScript would read as an offset."""
+        value = utc_now_iso()
+        with self.assertRaises(ValueError):
+            float(value)
 
 
 if __name__ == "__main__":

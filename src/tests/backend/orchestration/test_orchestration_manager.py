@@ -188,6 +188,9 @@ _markdown_utils = _ilu.module_from_spec(_md_spec)
 _md_spec.loader.exec_module(_markdown_utils)
 sys.modules['common.utils'] = Mock()
 sys.modules['common.utils.markdown_utils'] = _markdown_utils
+sys.modules['common.utils.utils_date'] = Mock(
+    utc_now_iso=Mock(return_value="2026-08-16T17:00:00+00:00")
+)
 
 
 class MockTeamConfiguration:

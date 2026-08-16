@@ -6,7 +6,6 @@ module level (never via sys.modules), so they do not pollute the shared
 interpreter state for other test files that import the same real modules.
 """
 
-import contextlib
 import os
 import sys
 from types import ModuleType, SimpleNamespace
@@ -139,6 +138,10 @@ def rt(monkeypatch):
     orchestration_config.set_approval_result = MagicMock()
     orchestration_config.set_clarification_result = MagicMock()
     orchestration_config.set_clarification_pending = MagicMock()
+    # Pending approvals and clarifications belong to the authenticated test user
+    # by default; individual tests override these to exercise a foreign caller.
+    orchestration_config.approval_owner = MagicMock(return_value="user-1")
+    orchestration_config.clarification_owner = MagicMock(return_value="user-1")
 
     team_config = MagicMock()
 
@@ -254,10 +257,15 @@ class TestProcessRequest:
         assert resp.status_code == 400
 
     def test_team_not_found(self, rt):
+        """A missing team is a 404 and reaches the client as one.
+
+        The enclosing `except Exception` used to fold this deliberate 404 into
+        the generic 400 for team-retrieval errors.
+        """
         rt.store.get_current_team.return_value = None
         rt.store.get_team_by_id.return_value = None
         resp = rt.client.post("/api/v4/process_request", json=self._payload())
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
     def test_rai_failure(self, rt):
         rt.store.get_team_by_id.return_value = MagicMock()
@@ -321,11 +329,35 @@ class TestPlanApproval:
         assert resp.status_code == 200
 
     def test_no_active_plan(self, rt):
-        # The 404 raised in the else-branch is caught by the surrounding
-        # `except Exception` block and surfaced as a 500 by the endpoint.
+        """An unknown m_plan_id is a 404 and reaches the client as one.
+
+        The surrounding `except Exception` used to swallow this and report a
+        500; deliberate status codes now re-raise ahead of the catch-all.
+        """
         rt.orchestration_config.approvals = {}
         resp = rt.client.post("/api/v4/plan_approval", json=self._payload())
-        assert resp.status_code == 500
+        assert resp.status_code == 404
+
+    def test_approval_by_non_owner_is_forbidden(self, rt):
+        """Holding a live m_plan_id is not authority to approve it.
+
+        The approval gate is the human-in-the-loop control: approving releases
+        the agent workflow to execute. A caller who is not the plan's owner must
+        not be able to do that, even with a valid pending id.
+        """
+        rt.orchestration_config.approvals = {"m-1": True}
+        rt.orchestration_config.approval_owner = MagicMock(return_value="someone-else")
+        resp = rt.client.post("/api/v4/plan_approval", json=self._payload())
+        assert resp.status_code == 403
+        rt.orchestration_config.set_approval_result.assert_not_called()
+
+    def test_approval_with_unrecorded_owner_is_forbidden(self, rt):
+        """An approval with no recorded owner cannot be verified, so it is denied."""
+        rt.orchestration_config.approvals = {"m-1": True}
+        rt.orchestration_config.approval_owner = MagicMock(return_value=None)
+        resp = rt.client.post("/api/v4/plan_approval", json=self._payload())
+        assert resp.status_code == 403
+        rt.orchestration_config.set_approval_result.assert_not_called()
 
     def test_plan_service_value_error(self, rt):
         rt.orchestration_config.approvals = {"m-1": True}
@@ -348,14 +380,68 @@ class TestClarificationAsk:
         resp = rt.client.post("/api/v4/clarification/ask", json={"question": ""})
         assert resp.status_code == 400
 
+    def _token(self, user_id="user-1"):
+        resource_tokens = router_mod.resource_tokens
+        return resource_tokens.mint(
+            resource_tokens.PURPOSE_CLARIFY, "", user_id, 60
+        )
+
     def test_success(self, rt):
         rt.orchestration_config.wait_for_clarification.return_value = "answer!"
         resp = rt.client.post(
             "/api/v4/clarification/ask",
-            json={"question": "why?", "user_id": "user-1"},
+            json={"question": "why?", "session_token": self._token()},
         )
         assert resp.status_code == 200
         assert resp.json()["answer"] == "answer!"
+
+    def test_the_user_comes_from_the_token_not_the_body(self, rt):
+        """The delivery target is derived from the signature, not the payload.
+
+        A caller that signs as one user and names another in the body must be
+        treated as the user it can actually prove.
+        """
+        rt.orchestration_config.wait_for_clarification.return_value = "answer!"
+        resp = rt.client.post(
+            "/api/v4/clarification/ask",
+            json={
+                "question": "why?",
+                "session_token": self._token("owner"),
+                "user_id": "someone-else",
+            },
+        )
+        assert resp.status_code == 200
+        rt.orchestration_config.set_clarification_pending.assert_called_once()
+        assert (
+            rt.orchestration_config.set_clarification_pending.call_args.kwargs["user_id"]
+            == "owner"
+        )
+
+    def test_no_token_is_refused(self, rt):
+        resp = rt.client.post(
+            "/api/v4/clarification/ask",
+            json={"question": "why?", "user_id": "user-1"},
+        )
+        assert resp.status_code == 401
+
+    def test_a_forged_token_is_refused(self, rt):
+        resp = rt.client.post(
+            "/api/v4/clarification/ask",
+            json={"question": "why?", "session_token": "not.a.token"},
+        )
+        assert resp.status_code == 401
+
+    def test_a_token_for_another_purpose_is_refused(self, rt):
+        """An image token must not double as permission to interrupt a user."""
+        resource_tokens = router_mod.resource_tokens
+        token = resource_tokens.mint(
+            resource_tokens.PURPOSE_IMAGE, "", "user-1", 60
+        )
+        resp = rt.client.post(
+            "/api/v4/clarification/ask",
+            json={"question": "why?", "session_token": token},
+        )
+        assert resp.status_code == 401
 
     def test_timeout(self, rt):
         import asyncio
@@ -365,7 +451,7 @@ class TestClarificationAsk:
         )
         resp = rt.client.post(
             "/api/v4/clarification/ask",
-            json={"question": "why?", "user_id": "user-1"},
+            json={"question": "why?", "session_token": self._token()},
         )
         assert resp.status_code == 200
         assert resp.json()["answer"] == ""
@@ -376,7 +462,7 @@ class TestClarificationAsk:
         )
         resp = rt.client.post(
             "/api/v4/clarification/ask",
-            json={"question": "why?", "user_id": "user-1"},
+            json={"question": "why?", "session_token": self._token()},
         )
         assert resp.status_code == 200
         assert resp.json()["answer"] == ""
@@ -399,7 +485,7 @@ class TestUserClarification:
     def test_team_not_found(self, rt):
         rt.store.get_team_by_id.return_value = None
         resp = rt.client.post("/api/v4/user_clarification", json=self._payload())
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
     def test_rai_failure(self, rt):
         rt.store.get_team_by_id.return_value = MagicMock()
@@ -421,6 +507,23 @@ class TestUserClarification:
         rt.orchestration_config.clarifications = {}
         resp = rt.client.post("/api/v4/user_clarification", json=self._payload())
         assert resp.status_code == 404
+
+    def test_clarification_by_non_owner_is_forbidden(self, rt):
+        """Only the user a question was put to may answer it.
+
+        The request_id travels to the browser over the WebSocket, so possessing
+        one says nothing about who was asked. An answer feeds straight back into
+        the agent loop.
+        """
+        rt.store.get_team_by_id.return_value = MagicMock()
+        rt.rai_success.return_value = True
+        rt.orchestration_config.clarifications = {"r-1": True}
+        rt.orchestration_config.clarification_owner = MagicMock(
+            return_value="someone-else"
+        )
+        resp = rt.client.post("/api/v4/user_clarification", json=self._payload())
+        assert resp.status_code == 403
+        rt.orchestration_config.set_clarification_result.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -451,9 +554,84 @@ class TestAgentMessage:
         assert resp.json()["status"] == "message recorded"
 
     def test_plan_service_error(self, rt):
+        plan = MagicMock()
+        plan.session_id = "sess-1"
+        rt.store.get_plan_by_plan_id.return_value = plan
         rt.plan_service.handle_agent_messages = AsyncMock(side_effect=Exception("boom"))
         resp = rt.client.post("/api/v4/agent_message", json=self._payload())
         assert resp.status_code == 200
+
+    def test_message_for_a_plan_you_do_not_own_is_rejected(self, rt):
+        """Appending to another user's transcript, and closing their plan out.
+
+        On is_final this handler sets overall_status=completed and overwrites
+        streaming_message with caller-supplied content, so the write is
+        authorized against the plan it targets.
+        """
+        rt.store.get_plan_by_plan_id.return_value = None
+        resp = rt.client.post("/api/v4/agent_message", json=self._payload())
+        assert resp.status_code == 404
+        rt.plan_service.handle_agent_messages.assert_not_called()
+
+    def test_message_without_plan_id_is_rejected(self, rt):
+        """With no plan_id the write can be neither attributed nor authorized."""
+        resp = rt.client.post("/api/v4/agent_message", json=self._payload(plan_id=""))
+        assert resp.status_code == 400
+        rt.plan_service.handle_agent_messages.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# /socket_token and /image_token
+# ---------------------------------------------------------------------------
+class TestResourceTokenEndpoints:
+    def test_socket_token_requires_a_user(self, rt):
+        _no_user(rt)
+        resp = rt.client.post("/api/v4/socket_token?plan_id=p-1")
+        assert resp.status_code == 401
+
+    def test_socket_token_is_bound_to_the_plan_and_the_caller(self, rt):
+        resource_tokens = router_mod.resource_tokens
+
+        rt.store.get_plan_by_plan_id.return_value = MagicMock()
+        resp = rt.client.post("/api/v4/socket_token?plan_id=p-1")
+
+        assert resp.status_code == 200
+        token = resp.json()["token"]
+        assert resource_tokens.verify(
+            token, resource_tokens.PURPOSE_SOCKET, "p-1"
+        ) == "user-1"
+
+    def test_socket_token_for_a_plan_you_do_not_own_is_404(self, rt):
+        """The plan lookup is user-scoped, so a foreign plan does not resolve."""
+        rt.store.get_plan_by_plan_id.return_value = None
+        resp = rt.client.post("/api/v4/socket_token?plan_id=someone-elses")
+        assert resp.status_code == 404
+
+    def test_image_token_requires_a_user(self, rt):
+        _no_user(rt)
+        resp = rt.client.post("/api/v4/image_token")
+        assert resp.status_code == 401
+
+    def test_image_token_is_issued_to_the_caller(self, rt):
+        resource_tokens = router_mod.resource_tokens
+
+        resp = rt.client.post("/api/v4/image_token")
+
+        assert resp.status_code == 200
+        token = resp.json()["token"]
+        assert resource_tokens.verify(
+            token, resource_tokens.PURPOSE_IMAGE, ""
+        ) == "user-1"
+
+    def test_a_socket_token_cannot_be_replayed_as_an_image_token(self, rt):
+        """Purpose is part of the signed payload."""
+        resource_tokens = router_mod.resource_tokens
+
+        rt.store.get_plan_by_plan_id.return_value = MagicMock()
+        socket_token = rt.client.post("/api/v4/socket_token?plan_id=p-1").json()["token"]
+
+        with pytest.raises(resource_tokens.ResourceTokenError):
+            resource_tokens.verify(socket_token, resource_tokens.PURPOSE_IMAGE, "")
 
 
 # ---------------------------------------------------------------------------
@@ -513,20 +691,74 @@ class TestUploadTeamConfig:
         assert resp.status_code == 200
         assert resp.json()["team_id"] == "team-999"
 
-    def test_success_with_team_id(self, rt):
-        rt.team_service.validate_team_models.return_value = (True, [])
-        rt.team_service.validate_team_search_indexes.return_value = (True, [])
+    def _parsed_team(self, rt, name="MyTeam"):
         team_conf = MagicMock()
         team_conf.agents = []
         team_conf.starting_tasks = []
-        team_conf.name = "MyTeam"
-        team_conf.model_dump.return_value = {"name": "MyTeam"}
+        team_conf.name = name
+        team_conf.model_dump.return_value = {"name": name}
         rt.team_service.validate_and_parse_team_config.return_value = team_conf
-        rt.team_service.save_team_configuration.return_value = "given-id"
+        return team_conf
+
+    def test_success_with_team_id(self, rt):
+        """An update goes through update_team_configuration, never an insert.
+
+        Inserting the parsed document would land a duplicate of the same
+        team_id in a different Cosmos partition, because its session_id — the
+        partition key — is freshly generated on every parse.
+        """
+        rt.team_service.validate_team_models.return_value = (True, [])
+        rt.team_service.validate_team_search_indexes.return_value = (True, [])
+        self._parsed_team(rt)
+        rt.team_service.update_team_configuration = AsyncMock(return_value="given-id")
         resp = rt.client.post(
             "/api/v4/upload_team_config?team_id=given-id", files=self._file()
         )
         assert resp.status_code == 200
+        assert resp.json()["team_id"] == "given-id"
+        rt.team_service.update_team_configuration.assert_awaited_once()
+        rt.team_service.save_team_configuration.assert_not_called()
+
+    def test_update_of_unknown_team_is_404(self, rt):
+        rt.team_service.validate_team_models.return_value = (True, [])
+        rt.team_service.validate_team_search_indexes.return_value = (True, [])
+        self._parsed_team(rt)
+        rt.team_service.update_team_configuration = AsyncMock(
+            side_effect=LookupError("Team configuration 'nope' not found")
+        )
+        resp = rt.client.post(
+            "/api/v4/upload_team_config?team_id=nope", files=self._file()
+        )
+        assert resp.status_code == 404
+
+    def test_update_of_a_default_team_is_403(self, rt):
+        """Shared default teams are visible to everyone and editable by no one."""
+        rt.team_service.validate_team_models.return_value = (True, [])
+        rt.team_service.validate_team_search_indexes.return_value = (True, [])
+        self._parsed_team(rt)
+        rt.team_service.update_team_configuration = AsyncMock(
+            side_effect=PermissionError("shared default")
+        )
+        resp = rt.client.post(
+            "/api/v4/upload_team_config?team_id=00000000-0000-0000-0000-000000000001",
+            files=self._file(),
+        )
+        assert resp.status_code == 403
+
+    def test_rai_validation_runs_even_when_a_team_id_is_supplied(self, rt):
+        """Supplying a team_id must not skip content safety.
+
+        The check was guarded by `if not team_id:`, so `?team_id=anything`
+        bypassed it entirely — and a team configuration carries each agent's
+        system_message, the very content this screens before it reaches an
+        agent's system prompt.
+        """
+        rt.rai_validate_team_config.return_value = (False, "unsafe content")
+        resp = rt.client.post(
+            "/api/v4/upload_team_config?team_id=given-id", files=self._file()
+        )
+        assert resp.status_code == 400
+        rt.rai_validate_team_config.assert_called_once()
 
     def test_parse_value_error(self, rt):
         rt.team_service.validate_team_models.return_value = (True, [])
@@ -700,13 +932,19 @@ class TestGetPlanById:
         assert resp.status_code == 400
 
     def test_no_plan_id(self, rt):
+        """Omitting plan_id is a 400, not the 500 the catch-all used to give."""
         resp = rt.client.get("/api/v4/plan")
-        assert resp.status_code == 500
+        assert resp.status_code == 400
 
     def test_plan_not_found(self, rt):
+        """A plan that does not resolve is a 404, not a 500.
+
+        Since the lookup is user-scoped, this is also the response for a plan
+        belonging to someone else.
+        """
         rt.store.get_plan_by_plan_id.return_value = None
         resp = rt.client.get("/api/v4/plan?plan_id=p1")
-        assert resp.status_code == 500
+        assert resp.status_code == 404
 
     def test_success(self, rt):
         plan = MagicMock()
@@ -741,6 +979,40 @@ class TestGetGeneratedImage:
         resp = rt.client.get("/api/v4/images/evil!.png")
         assert resp.status_code == 400
 
+    def _configure_storage(self, rt, monkeypatch):
+        cfg = MagicMock()
+        cfg.AZURE_STORAGE_BLOB_URL = "https://blob"
+        cfg.AZURE_STORAGE_IMAGES_CONTAINER = "images"
+        monkeypatch.setattr(router_mod, "config", cfg)
+
+    def test_an_invalid_token_is_rejected(self, rt, monkeypatch):
+        self._configure_storage(rt, monkeypatch)
+        resp = rt.client.get("/api/v4/images/pic.png?token=nonsense")
+        assert resp.status_code == 403
+
+    def test_an_image_owned_by_another_user_is_refused(self, rt, monkeypatch):
+        """The ownership record is what makes this more than 'some valid user'."""
+        resource_tokens = router_mod.resource_tokens
+        self._configure_storage(rt, monkeypatch)
+        rt.store.get_image_asset = AsyncMock(return_value=MagicMock(user_id="someone-else"))
+        token = resource_tokens.mint(resource_tokens.PURPOSE_IMAGE, "", "user-1", 60)
+
+        resp = rt.client.get(f"/api/v4/images/pic.png?token={token}")
+
+        assert resp.status_code == 403
+
+    def test_an_image_with_no_record_falls_back_to_token_only(self, rt, monkeypatch):
+        """Images generated before ownership was recorded must keep rendering."""
+        resource_tokens = router_mod.resource_tokens
+        self._configure_storage(rt, monkeypatch)
+        rt.store.get_image_asset = AsyncMock(return_value=None)
+        token = resource_tokens.mint(resource_tokens.PURPOSE_IMAGE, "", "user-1", 60)
+
+        resp = rt.client.get(f"/api/v4/images/pic.png?token={token}")
+
+        # Reaches blob storage (which is unreachable here) rather than 403ing.
+        assert resp.status_code != 403
+
 
 # ---------------------------------------------------------------------------
 # WebSocket /socket/{process_id}
@@ -756,8 +1028,73 @@ class TestWebSocket:
             ws.send_text("hello")
         rt.connection_config.add_connection.assert_called_once()
 
-    def test_connect_default_user(self, rt):
+    def test_connect_with_a_valid_token_is_accepted(self, rt):
+        """A signed token establishes identity rather than merely asserting it."""
+        resource_tokens = router_mod.resource_tokens
+
+        plan = MagicMock()
+        plan.session_id = "sess-1"
+        rt.store.get_plan_by_plan_id.return_value = plan
+        token = resource_tokens.mint(
+            resource_tokens.PURPOSE_SOCKET, "proc-1", "user-1", 60
+        )
+
+        with rt.client.websocket_connect(
+            f"/api/v4/socket/proc-1?token={token}"
+        ) as ws:
+            ws.send_text("hello")
+        rt.connection_config.add_connection.assert_called_once()
+
+    def test_connect_with_a_token_for_another_plan_is_refused(self, rt):
+        """Binding the token to a plan is what stops it being replayed."""
+        resource_tokens = router_mod.resource_tokens
+
+        plan = MagicMock()
+        plan.session_id = "sess-1"
+        rt.store.get_plan_by_plan_id.return_value = plan
+        token = resource_tokens.mint(
+            resource_tokens.PURPOSE_SOCKET, "some-other-plan", "user-1", 60
+        )
+
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect(f"/api/v4/socket/proc-1?token={token}"):
+                pass
+        rt.connection_config.add_connection.assert_not_called()
+
+    def test_connect_with_a_garbage_token_is_refused(self, rt):
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect("/api/v4/socket/proc-1?token=nonsense"):
+                pass
+        rt.connection_config.add_connection.assert_not_called()
+
+    def test_connect_without_user_id_is_refused(self, rt):
+        """No identity, no socket — there is no anonymous default any more."""
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect("/api/v4/socket/proc-2"):
+                pass
+        rt.connection_config.add_connection.assert_not_called()
+
+    def test_connect_to_a_plan_you_do_not_own_is_refused(self, rt):
+        """The plan lookup is user-scoped, so a foreign plan_id does not resolve.
+
+        This socket streams the whole orchestration — agent reasoning, tool
+        calls, plan content, final result — so the handshake is refused rather
+        than accepted and then dropped.
+        """
         rt.store.get_plan_by_plan_id.return_value = None
-        with contextlib.suppress(Exception):
-            with rt.client.websocket_connect("/api/v4/socket/proc-2") as ws:
-                ws.close()
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect(
+                "/api/v4/socket/someone-elses-plan?user_id=user-1"
+            ):
+                pass
+        rt.connection_config.add_connection.assert_not_called()
+
+    def test_connect_is_refused_when_the_check_cannot_run(self, rt):
+        """An authorization check that errors has not passed — fail closed."""
+        rt.store.get_plan_by_plan_id.side_effect = RuntimeError("cosmos down")
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect(
+                "/api/v4/socket/proc-1?user_id=user-1"
+            ):
+                pass
+        rt.connection_config.add_connection.assert_not_called()

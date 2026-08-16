@@ -21,6 +21,7 @@ import {
   UserRequestObject
 } from "@/models";
 import { apiService } from "@/api";
+import { toEpochMs } from "@/utils";
 
 /**
  * Service for processing and managing plan data operations
@@ -63,7 +64,7 @@ export class PlanDataService {
     return messages.map((message: AgentMessageBE): AgentMessageData => ({
       agent: message.agent,
       agent_type: message.agent_type,
-      timestamp: message.timestamp ? new Date(message.timestamp).getTime() : Date.now(),
+      timestamp: toEpochMs(message.timestamp) ?? Date.now(),
       steps: message.steps || [],
       next_steps: message.next_steps ?? [],
       content: message.content,
@@ -498,7 +499,7 @@ export class PlanDataService {
           // New format: { type: 'agent_message', data: { agent_name: '...', timestamp: 123, content: '...' } }
           const data = rawData.data;
           const content = data.content || '';
-          const timestamp = typeof data.timestamp === 'number' ? data.timestamp : null;
+          const timestamp = toEpochMs(data.timestamp);
 
           // Parse the content for steps and next_steps (reuse existing logic)
           const { steps, next_steps } = this.parseContentForStepsAndNextSteps(content);
@@ -521,7 +522,7 @@ export class PlanDataService {
       // Handle direct object format
       if (rawData && typeof rawData === 'object' && rawData.agent_name) {
         const content = rawData.content || '';
-        const timestamp = typeof rawData.timestamp === 'number' ? rawData.timestamp : null;
+        const timestamp = toEpochMs(rawData.timestamp);
 
         // Parse the content for steps and next_steps
         const { steps, next_steps } = this.parseContentForStepsAndNextSteps(content);
@@ -870,11 +871,7 @@ export class PlanDataService {
       const statusRaw = (payload.status || 'completed').toString().trim();
       const status = statusRaw.toLowerCase();
 
-      let timestamp: number | null = null;
-      if (payload.timestamp != null) {
-        const num = Number(payload.timestamp);
-        if (!Number.isNaN(num)) timestamp = num;
-      }
+      const timestamp: number | null = toEpochMs(payload.timestamp);
 
       return {
         type: WebsocketMessageType.FINAL_RESULT_MESSAGE,

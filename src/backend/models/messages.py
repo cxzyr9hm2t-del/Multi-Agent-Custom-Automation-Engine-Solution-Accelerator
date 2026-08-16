@@ -122,7 +122,7 @@ class TimeoutNotification:
     timeout_type: str          # "approval" or "clarification"
     request_id: str            # plan_id or request_id
     message: str               # description
-    timestamp: float           # epoch time
+    timestamp: str             # ISO-8601 UTC, from utils_date.utc_now_iso()
     timeout_duration: float    # seconds waited
 
     def to_dict(self) -> Dict[str, Any]:

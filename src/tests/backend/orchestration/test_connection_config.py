@@ -7,7 +7,7 @@ TeamConfig. WebSockets are represented by AsyncMock/MagicMock.
 
 import asyncio
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -70,6 +70,29 @@ class TestOrchestrationApproval:
         ev.set()
         cfg.set_approval_pending("p1")  # existing -> clear
         assert not cfg._approval_events["p1"].is_set()
+
+    def test_approval_records_and_clears_its_owner(self):
+        """The owner is what makes an approval answerable by one user only."""
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="alice")
+        assert cfg.approval_owner("p1") == "alice"
+
+        cfg.cleanup_approval("p1")
+        assert cfg.approval_owner("p1") is None
+
+    def test_approval_owner_is_none_when_not_supplied(self):
+        """No owner recorded means unverifiable; callers must treat that as a denial."""
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1")
+        assert cfg.approval_owner("p1") is None
+
+    def test_clarification_records_and_clears_its_owner(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="alice")
+        assert cfg.clarification_owner("r1") == "alice"
+
+        cfg.cleanup_clarification("r1")
+        assert cfg.clarification_owner("r1") is None
 
     def test_set_approval_result_triggers_event(self):
         cfg = OrchestrationConfig()
@@ -256,13 +279,39 @@ class TestSendStatusUpdateAsync:
         await cc.send_status_update_async("m", user_id="")  # early return
 
     @pytest.mark.asyncio
-    async def test_fallback_single_user(self):
+    async def test_fallback_single_user_in_dev(self):
+        """In dev, a message for an unknown user reaches the sole connected one.
+
+        The MCP ask_user tool takes its user_id from the model, which sometimes
+        supplies a placeholder; this recovers the question locally.
+        """
+        import backend.orchestration.connection_config as cc_mod
+
         cc = ConnectionConfig()
         ws = AsyncMock()
         cc.connections["proc1"] = ws
         cc.user_to_process["real"] = "proc1"
-        await cc.send_status_update_async({"k": "v"}, user_id="wrong")
+        with patch.object(cc_mod.config, "APP_ENV", "dev"):
+            await cc.send_status_update_async({"k": "v"}, user_id="wrong")
         ws.send_text.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_outside_dev(self):
+        """Outside dev the message is dropped rather than misdelivered.
+
+        Falling back here would hand one user's agent output — questions, plan
+        content, results — to a different user who merely happens to be the
+        only one connected.
+        """
+        import backend.orchestration.connection_config as cc_mod
+
+        cc = ConnectionConfig()
+        ws = AsyncMock()
+        cc.connections["proc1"] = ws
+        cc.user_to_process["real"] = "proc1"
+        with patch.object(cc_mod.config, "APP_ENV", "prod"):
+            await cc.send_status_update_async({"k": "v"}, user_id="wrong")
+        ws.send_text.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_process_multiple_users(self):

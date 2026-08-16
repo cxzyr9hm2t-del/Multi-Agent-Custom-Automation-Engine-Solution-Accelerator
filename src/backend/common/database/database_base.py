@@ -232,6 +232,16 @@ class DatabaseBase(ABC):
         pass
 
     @abstractmethod
+    async def add_image_asset(self, image_asset) -> None:
+        """Record ownership of a generated image."""
+        pass
+
+    @abstractmethod
+    async def get_image_asset(self, blob_name: str):
+        """Look up who a generated image belongs to."""
+        pass
+
+    @abstractmethod
     async def get_agent_messages(self, plan_id: str) -> Optional[AgentMessageData]:
         """Retrieve agent messages by plan_id."""
         pass

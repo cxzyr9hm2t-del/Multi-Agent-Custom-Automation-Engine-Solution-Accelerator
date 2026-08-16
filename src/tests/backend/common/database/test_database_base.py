@@ -168,6 +168,12 @@ class TestDatabaseBaseImplementationRequirements:
             
             async def get_agent_messages(self, plan_id: str) -> Optional[AgentMessageData]:
                 return None
+
+            async def add_image_asset(self, image_asset) -> None:
+                pass
+
+            async def get_image_asset(self, blob_name: str):
+                return None
             
             async def add_team_agent(self, team_agent: CurrentTeamAgent) -> None:
                 pass
@@ -254,6 +260,8 @@ class TestDatabaseBaseContextManager:
             async def add_agent_message(self, message): pass
             async def update_agent_message(self, message): pass
             async def get_agent_messages(self, plan_id): return None
+            async def add_image_asset(self, image_asset): pass
+            async def get_image_asset(self, blob_name): return None
             async def add_team_agent(self, team_agent): pass
             async def delete_team_agent(self, team_id, agent_name): pass
             async def get_team_agent(self, team_id, agent_name): return None
@@ -319,6 +327,8 @@ class TestDatabaseBaseContextManager:
             async def add_agent_message(self, message): pass
             async def update_agent_message(self, message): pass
             async def get_agent_messages(self, plan_id): return None
+            async def add_image_asset(self, image_asset): pass
+            async def get_image_asset(self, blob_name): return None
             async def add_team_agent(self, team_agent): pass
             async def delete_team_agent(self, team_id, agent_name): pass
             async def get_team_agent(self, team_id, agent_name): return None
@@ -491,6 +501,8 @@ class TestConcreteImplementation:
             async def add_agent_message(self, message): pass
             async def update_agent_message(self, message): pass
             async def get_agent_messages(self, plan_id): return None
+            async def add_image_asset(self, image_asset): pass
+            async def get_image_asset(self, blob_name): return None
             async def add_team_agent(self, team_agent): pass
             async def delete_team_agent(self, team_id, agent_name): pass
             async def get_team_agent(self, team_id, agent_name): return None
@@ -560,6 +572,8 @@ class TestDatabaseBaseAbstractMethodCoverage:
             async def add_agent_message(self, message): await super().add_agent_message(message)
             async def update_agent_message(self, message): await super().update_agent_message(message)
             async def get_agent_messages(self, plan_id): return await super().get_agent_messages(plan_id)
+            async def add_image_asset(self, image_asset): await super().add_image_asset(image_asset)
+            async def get_image_asset(self, blob_name): return await super().get_image_asset(blob_name)
             async def add_team_agent(self, team_agent): await super().add_team_agent(team_agent)
             async def delete_team_agent(self, team_id, agent_name): await super().delete_team_agent(team_id, agent_name)
             async def get_team_agent(self, team_id, agent_name): return await super().get_team_agent(team_id, agent_name)

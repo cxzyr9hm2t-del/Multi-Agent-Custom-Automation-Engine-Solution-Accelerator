@@ -7,6 +7,7 @@ from common.database.database_factory import DatabaseFactory
 from common.models.messages import (AgentMessageData, AgentMessageType,
                                     AgentType, PlanStatus)
 from common.utils.event_utils import track_event_if_configured
+from common.utils.image_assets import record_image_ownership
 from orchestration.connection_config import orchestration_config
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,6 @@ def build_agent_message_from_agent_message_response(
     Convert a messages.AgentMessageResponse into common.models.messages.AgentMessageData.
     This is defensive: it tolerates missing fields and different timestamp formats.
     """
-    # Robust timestamp parsing (accepts seconds or ms or missing)
-
     # Raw data serialization
     raw = getattr(agent_response, "raw_data", None)
     try:
@@ -137,9 +136,9 @@ class PlanService:
             mplan = orchestration_config.plans[human_feedback.m_plan_id]
             memory_store = await DatabaseFactory.get_database(user_id=user_id)
             if hasattr(mplan, "plan_id"):
-                print(
-                    "Updated orchestration config:",
-                    orchestration_config.plans[human_feedback.m_plan_id],
+                logger.debug(
+                    "Updated orchestration config for m_plan %s",
+                    human_feedback.m_plan_id,
                 )
                 if human_feedback.approved:
                     plan = await memory_store.get_plan(human_feedback.plan_id)
@@ -159,7 +158,10 @@ class PlanService:
                             },
                         )
                     else:
-                        print("Plan not found in memory store.")
+                        logger.warning(
+                            "Plan '%s' not found for user '%s'",
+                            human_feedback.plan_id, user_id,
+                        )
                         return False
                 else:  # reject plan
                     track_event_if_configured(
@@ -173,7 +175,7 @@ class PlanService:
                     await memory_store.delete_plan_by_plan_id(human_feedback.plan_id)
 
         except Exception as e:
-            print(f"Error processing plan approval: {e}")
+            logger.exception("Error processing plan approval: %s", e)
             return False
         return True
 
@@ -203,8 +205,28 @@ class PlanService:
             # Look for or implement something like: memory_store.add_agent_message(agent_msg)
             memory_store = await DatabaseFactory.get_database(user_id=user_id)
             await memory_store.add_agent_message(agent_msg)
+
+            # Any generated image referenced here reached this user through
+            # their own agent output, so this is where ownership is established.
+            await record_image_ownership(
+                memory_store,
+                f"{agent_msg.content}\n{agent_message.streaming_message or ''}",
+                user_id,
+                agent_msg.plan_id,
+            )
+
             if agent_message.is_final:
                 plan = await memory_store.get_plan(agent_msg.plan_id)
+                if plan is None:
+                    # The plan does not exist, or belongs to another user — the
+                    # lookup is scoped to the caller. Previously this dereferenced
+                    # None and reported the resulting AttributeError as success.
+                    logger.warning(
+                        "No plan '%s' for user '%s'; not marking it completed",
+                        agent_msg.plan_id,
+                        user_id,
+                    )
+                    return False
                 plan.streaming_message = agent_message.streaming_message
                 plan.overall_status = PlanStatus.completed
                 await memory_store.update_plan(plan)

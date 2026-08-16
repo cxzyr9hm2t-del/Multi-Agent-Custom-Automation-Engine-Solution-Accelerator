@@ -37,6 +37,11 @@ sys.modules['common.database.database_factory'] = mock_database_factory
 mock_event_utils = MagicMock()
 sys.modules['common.utils.event_utils'] = mock_event_utils
 
+# Ownership recording is fire-and-forget from this service's point of view.
+mock_image_assets = MagicMock()
+mock_image_assets.record_image_ownership = AsyncMock()
+sys.modules['common.utils.image_assets'] = mock_image_assets
+
 # Create mock common.models.messages with enums
 class MockAgentType:
     HUMAN = MagicMock()
@@ -344,6 +349,33 @@ class TestPlanService:
         assert mock_plan.streaming_message == "Stream completed"
         assert mock_plan.overall_status == MockPlanStatus.completed
         mock_db.update_plan.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_agent_messages_final_message_plan_not_found(self):
+        """A final message for a plan the caller does not own must not succeed.
+
+        get_plan is scoped to the caller, so a foreign or missing plan_id yields
+        None. This previously dereferenced None and reported the resulting
+        AttributeError as success, leaving the caller believing the plan was
+        marked completed.
+        """
+        mock_message = MockAgentMessageResponse(
+            plan_id="someone-elses-plan",
+            agent="TestAgent",
+            content="Final message",
+            is_final=True,
+            streaming_message="Stream completed"
+        )
+        mock_db = MagicMock()
+        mock_db.add_agent_message = AsyncMock()
+        mock_db.get_plan = AsyncMock(return_value=None)
+        mock_db.update_plan = AsyncMock()
+        mock_database_factory.DatabaseFactory.get_database = AsyncMock(return_value=mock_db)
+
+        result = await PlanService.handle_agent_messages(mock_message, "test-user")
+
+        assert result is False
+        mock_db.update_plan.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handle_agent_messages_exception(self):

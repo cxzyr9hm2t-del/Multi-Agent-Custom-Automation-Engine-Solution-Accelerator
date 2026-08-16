@@ -1,5 +1,8 @@
 name: Send Notification Job
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
     inputs:

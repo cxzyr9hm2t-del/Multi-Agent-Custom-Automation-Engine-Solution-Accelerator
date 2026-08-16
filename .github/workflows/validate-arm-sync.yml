@@ -1,0 +1,113 @@
+name: Validate Compiled ARM
+
+# The checked-in infra/**/main.json files are the compiled form of the Bicep
+# beside them. Nothing regenerated them automatically, so they drifted: at
+# 2026-08-16 infra/bicep/main.json was 15 JSON lines behind its source and
+# infra/avm/main.json 89, having missed two backend environment variables, a
+# removed WEBSITES_PORT and a batch of AVM module updates.
+#
+# azd compiles main.bicep directly, so drift never broke a deployment through
+# that path — which is exactly why it went unnoticed. It matters for anyone
+# deploying the ARM templates directly, and a stale artifact that looks current
+# is worse than no artifact.
+#
+# This job rebuilds all three and fails if the result differs from what is
+# committed. To fix a failure, run the same build locally and commit the output.
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'infra/**'
+      - '.github/workflows/validate-arm-sync.yml'
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'infra/**'
+      - '.github/workflows/validate-arm-sync.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pinned to the version already recorded in each main.json's
+  # metadata._generator. A newer compiler reformats the whole 5 MB file and
+  # buries the real change, so the check would fail on compiler drift rather
+  # than on content drift. Bump this and the committed output together.
+  BICEP_VERSION: v0.44.1
+
+jobs:
+  arm-sync:
+    name: Compiled ARM matches its Bicep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+
+      - name: Install Bicep ${{ env.BICEP_VERSION }}
+        run: |
+          set -euo pipefail
+          # Installed under RUNNER_TEMP, not /usr/local/bin: the runner user
+          # cannot chmod there without sudo, and reaching for sudo to place a
+          # downloaded binary on the system path is the wrong trade for a
+          # single-job tool.
+          mkdir -p "${RUNNER_TEMP}/bin"
+          curl -fsSL -o "${RUNNER_TEMP}/bin/bicep" \
+            "https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-x64"
+          chmod +x "${RUNNER_TEMP}/bin/bicep"
+          echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/bin/bicep" --version
+
+      - name: Rebuild the compiled ARM
+        run: |
+          set -euo pipefail
+          for source in infra/main.bicep infra/bicep/main.bicep infra/avm/main.bicep; do
+            echo "Building $source"
+            bicep build "$source" --outfile "${source%.bicep}.json"
+          done
+
+      - name: Compare against what is committed
+        id: compare
+        run: |
+          set -uo pipefail
+
+          if git diff --quiet -- 'infra/**/main.json' 'infra/main.json'; then
+            echo "The compiled ARM matches its Bicep sources."
+            exit 0
+          fi
+
+          echo "::error::The compiled ARM is out of date with the Bicep sources."
+          echo ""
+          git diff --stat -- 'infra/**/main.json' 'infra/main.json'
+          echo ""
+          echo "Regenerate and commit:"
+          echo ""
+          echo "  curl -fsSL -o bicep https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-x64"
+          echo "  chmod +x bicep"
+          echo "  for f in infra/main.bicep infra/bicep/main.bicep infra/avm/main.bicep; do"
+          echo "    ./bicep build \"\$f\" --outfile \"\${f%.bicep}.json\""
+          echo "  done"
+          echo ""
+          echo "Use ${BICEP_VERSION} specifically — a different compiler rewrites the"
+          echo "whole file and the diff stops being reviewable."
+          exit 1
+
+      - name: Upload the rebuilt templates
+        # Only when the comparison itself failed. A bare `failure()` also fires
+        # when the install or build step died, and would then upload the files
+        # exactly as committed — presenting the stale templates as the
+        # regenerated ones, which is worse than uploading nothing.
+        if: failure() && steps.compare.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: rebuilt-arm-templates
+          path: |
+            infra/main.json
+            infra/bicep/main.json
+            infra/avm/main.json
+          retention-days: 7

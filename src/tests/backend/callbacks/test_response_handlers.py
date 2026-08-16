@@ -96,6 +96,9 @@ sys.modules['common.utils.markdown_utils'] = Mock(normalize_markdown_tables=Mock
 sys.modules['common.utils.team_utils'] = Mock()
 sys.modules['common.utils.event_utils'] = Mock()
 sys.modules['common.utils.otlp_tracing'] = Mock()
+sys.modules['common.utils.utils_date'] = Mock(
+    utc_now_iso=Mock(return_value="2026-08-16T17:00:00+00:00")
+)
 
 # Mock orchestration.connection_config dependencies
 mock_connection_config = Mock()
@@ -433,10 +436,10 @@ class TestAgentResponseCallback:
             )
 
     @patch('backend.callbacks.response_handlers.asyncio.create_task')
-    @patch('backend.callbacks.response_handlers.time.time')
-    def test_agent_response_callback_with_chat_message(self, mock_time, mock_create_task):
+    @patch('backend.callbacks.response_handlers.utc_now_iso')
+    def test_agent_response_callback_with_chat_message(self, mock_now, mock_create_task):
         """Test agent_response_callback with Message object."""
-        mock_time.return_value = 1234567890.0
+        mock_now.return_value = "2026-08-16T17:00:00+00:00"
 
         # Create an instance of our MockChatMessage
         mock_message = MockChatMessage()
@@ -453,7 +456,7 @@ class TestAgentResponseCallback:
             # Verify AgentMessage was created with cleaned text
             mock_agent_message.assert_called_once_with(
                 agent_name="Test Agent",
-                timestamp=1234567890.0,
+                timestamp="2026-08-16T17:00:00+00:00",
                 content="Test message with citations "
             )
 
@@ -461,10 +464,10 @@ class TestAgentResponseCallback:
             mock_create_task.assert_called_once()
 
     @patch('backend.callbacks.response_handlers.asyncio.create_task')
-    @patch('backend.callbacks.response_handlers.time.time')
-    def test_agent_response_callback_fallback_message(self, mock_time, mock_create_task):
+    @patch('backend.callbacks.response_handlers.utc_now_iso')
+    def test_agent_response_callback_fallback_message(self, mock_now, mock_create_task):
         """Test agent_response_callback with non-ChatMessage object (fallback)."""
-        mock_time.return_value = 1234567890.0
+        mock_now.return_value = "2026-08-16T17:00:00+00:00"
 
         mock_message = Mock()
         mock_message.text = "Fallback message text"
@@ -483,15 +486,15 @@ class TestAgentResponseCallback:
             # Verify AgentMessage was created with agent_id as agent_name
             mock_agent_message.assert_called_once_with(
                 agent_name="Agent 123",
-                timestamp=1234567890.0,
+                timestamp="2026-08-16T17:00:00+00:00",
                 content="Fallback message text"
             )
 
     @patch('backend.callbacks.response_handlers.asyncio.create_task')
-    @patch('backend.callbacks.response_handlers.time.time')
-    def test_agent_response_callback_no_text_attribute(self, mock_time, mock_create_task):
+    @patch('backend.callbacks.response_handlers.utc_now_iso')
+    def test_agent_response_callback_no_text_attribute(self, mock_now, mock_create_task):
         """Test agent_response_callback with message that has no text attribute."""
-        mock_time.return_value = 1234567890.0
+        mock_now.return_value = "2026-08-16T17:00:00+00:00"
 
         mock_message = Mock()
         if hasattr(mock_message, 'text'):
@@ -507,7 +510,7 @@ class TestAgentResponseCallback:
             # Verify AgentMessage was created with empty content
             mock_agent_message.assert_called_once_with(
                 agent_name="Test Agent",
-                timestamp=1234567890.0,
+                timestamp="2026-08-16T17:00:00+00:00",
                 content=""
             )
 
@@ -533,10 +536,10 @@ class TestAgentResponseCallback:
 
     @patch('backend.callbacks.response_handlers.logger')
     @patch('backend.callbacks.response_handlers.asyncio.create_task')
-    @patch('backend.callbacks.response_handlers.time.time')
-    def test_agent_response_callback_successful_logging(self, mock_time, mock_create_task, mock_logger):
+    @patch('backend.callbacks.response_handlers.utc_now_iso')
+    def test_agent_response_callback_successful_logging(self, mock_now, mock_create_task, mock_logger):
         """Test agent_response_callback logs successful message."""
-        mock_time.return_value = 1234567890.0
+        mock_now.return_value = "2026-08-16T17:00:00+00:00"
 
         long_message = "A very long test message that should be truncated in the log output because it exceeds the 200 character limit that is applied in the logging statement for better readability and log management"
         mock_message = Mock()

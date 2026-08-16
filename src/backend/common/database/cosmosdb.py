@@ -14,6 +14,7 @@ from ..models.messages import (
     BaseDataModel,
     CurrentTeamAgent,
     DataType,
+    ImageAsset,
     Plan,
     Step,
     TeamConfiguration,
@@ -187,8 +188,16 @@ class CosmosDBClient(DatabaseBase):
         await self.update_item(plan)
 
     async def get_plan_by_plan_id(self, plan_id: str) -> Optional[Plan]:
-        """Retrieve a plan by plan_id."""
-        query = "SELECT * FROM c WHERE c.id=@plan_id AND c.data_type=@data_type"
+        """Retrieve a plan by plan_id, scoped to the current user.
+
+        The user_id predicate is what stops a plan_id belonging to someone else
+        from resolving. Every caller builds this client with the authenticated
+        principal, so a plan the caller does not own must return None.
+        """
+        query = (
+            "SELECT * FROM c WHERE c.id=@plan_id AND c.data_type=@data_type "
+            "AND c.user_id=@user_id"
+        )
         parameters = [
             {"name": "@plan_id", "value": plan_id},
             {"name": "@data_type", "value": DataType.plan},
@@ -441,11 +450,22 @@ class CosmosDBClient(DatabaseBase):
         await self.update_item(current_team)
 
     async def delete_plan_by_plan_id(self, plan_id: str) -> bool:
-        """Delete a plan by its ID."""
-        query = "SELECT c.id, c.session_id FROM c WHERE c.id=@plan_id "
+        """Delete a plan by its ID, scoped to the current user.
+
+        Without the data_type and user_id predicates this matched any document
+        whose id happened to equal plan_id — a team configuration or a message
+        just as readily as a plan, and another user's just as readily as the
+        caller's.
+        """
+        query = (
+            "SELECT c.id, c.session_id FROM c WHERE c.id=@plan_id "
+            "AND c.data_type=@data_type AND c.user_id=@user_id"
+        )
 
         params = [
             {"name": "@plan_id", "value": plan_id},
+            {"name": "@data_type", "value": DataType.plan},
+            {"name": "@user_id", "value": self.user_id},
         ]
         items = self.container.query_items(query=query, parameters=params)
         self.logger.debug("delete_plan_by_plan_id: querying items for plan_id=%s", plan_id)
@@ -498,13 +518,32 @@ class CosmosDBClient(DatabaseBase):
 
         return await self.query_items(query, parameters, AgentMessageData)
 
+    async def add_image_asset(self, image_asset: ImageAsset) -> None:
+        """Record ownership of a generated image."""
+        await self.add_item(image_asset)
+
+    async def get_image_asset(self, blob_name: str) -> Optional[ImageAsset]:
+        """Look up who a generated image belongs to.
+
+        Deliberately not scoped to the current user: the image proxy compares
+        the recorded owner against the requester itself, and needs to tell
+        "belongs to someone else" apart from "no record exists".
+        """
+        query = "SELECT * FROM c WHERE c.blob_name=@blob_name AND c.data_type=@data_type"
+        parameters = [
+            {"name": "@blob_name", "value": blob_name},
+            {"name": "@data_type", "value": DataType.image_asset},
+        ]
+        results = await self.query_items(query, parameters, ImageAsset)
+        return results[0] if results else None
+
     async def add_team_agent(self, team_agent: CurrentTeamAgent) -> None:
         """Add an agent message to the database."""
         await self.delete_team_agent(team_agent.team_id, team_agent.agent_name)  # Ensure no duplicates
         await self.add_item(team_agent)
 
-    async def delete_team_agent(self, team_id: str, agent_name: str) -> None:
-        """Delete the current team for a user."""
+    async def delete_team_agent(self, team_id: str, agent_name: str) -> bool:
+        """Delete a team's record of a named agent."""
         query = "SELECT c.id, c.session_id FROM c WHERE c.team_id=@team_id AND c.data_type=@data_type AND c.agent_name=@agent_name"
 
         params = [

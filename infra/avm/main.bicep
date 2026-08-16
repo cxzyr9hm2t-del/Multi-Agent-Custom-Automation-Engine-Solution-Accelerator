@@ -164,6 +164,9 @@ param enableMonitoring bool = false
 @description('Optional. Enable scalability for applicable resources, aligned with the Well Architected Framework recommendations. Defaults to false.')
 param enableScalability bool = false
 
+@description('Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token.')
+param backendAuthClientId string = ''
+
 @description('Optional. Enable redundancy for applicable resources, aligned with the Well Architected Framework recommendations. Defaults to false.')
 param enableRedundancy bool = false
 
@@ -1070,6 +1073,7 @@ module containerApp './modules/compute/container-app.bicep' = {
     environmentResourceId: containerAppEnvironment.outputs.resourceId
     ingressExternal: true
     ingressTargetPort: 8000
+    authClientId: backendAuthClientId
     ingressAllowInsecure: false
     enableTelemetry: enableTelemetry
     managedIdentities: {
@@ -1094,9 +1098,18 @@ module containerApp './modules/compute/container-app.bicep' = {
         'OPTIONS'
       ]
     }
+    // Pinned to a single replica regardless of enableScalability. The backend
+    // keeps orchestration handles, pending approvals, clarifications and
+    // WebSocket registrations in process memory (see
+    // orchestration/connection_config.py). At more than one replica a socket
+    // opened on one instance cannot receive events from an orchestration
+    // running on another, and an approval posted to one never reaches the
+    // coroutine awaiting it on the other — so plans hang at the approval gate
+    // with no error. Lifting this means moving that state to Cosmos or Redis
+    // and putting a backplane behind the socket registry.
     scaleSettings: {
       minReplicas: 1
-      maxReplicas: enableScalability ? 3 : 1
+      maxReplicas: 1
     }
     containers: [
       {
@@ -1245,7 +1258,12 @@ module containerAppMcp './modules/compute/container-app.bicep' = {
     location: location
     tags: tags
     environmentResourceId: containerAppEnvironment.outputs.resourceId
-    ingressExternal: true
+    // Internal ingress: the MCP server is reached only by the backend container,
+    // from inside this Container Apps environment (client-side MCPStreamableHTTPTool
+    // — see agents/agent_template.py). Nothing external consumes it, and it runs
+    // with ENABLE_AUTH=false, so public ingress would expose every domain tool
+    // unauthenticated.
+    ingressExternal: false
     ingressTargetPort: 9000
     ingressAllowInsecure: false
     enableTelemetry: enableTelemetry

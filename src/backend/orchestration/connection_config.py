@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
+from common.config.app_config import config
 from common.models.messages import TeamConfiguration
 from fastapi import WebSocket
 from models.messages import WebsocketMessageType
@@ -20,7 +21,19 @@ logger = logging.getLogger(__name__)
 
 
 class OrchestrationConfig:
-    """Configuration and in-memory state for Magentic orchestration workflows."""
+    """Configuration and in-memory state for Magentic orchestration workflows.
+
+    SCALING CONSTRAINT — this state lives in process memory, so the backend is
+    correct only at a single replica. With more than one, a WebSocket opened on
+    replica A cannot receive events from an orchestration running on replica B,
+    and an approval posted to A never reaches the coroutine awaiting it on B.
+
+    The Bicep templates pin the backend to minReplicas/maxReplicas = 1, and that
+    pin is load-bearing rather than a cost setting. Raising it silently breaks
+    approvals and WebSocket delivery. Lifting the constraint means moving
+    approval and clarification state to Cosmos or Redis and putting a backplane
+    behind the socket registry.
+    """
 
     def __init__(self):
         self.orchestrations: Dict[str, Any] = {}       # user_id -> workflow instance
@@ -35,6 +48,14 @@ class OrchestrationConfig:
         self._approval_events: Dict[str, asyncio.Event] = {}
         self._clarification_events: Dict[str, asyncio.Event] = {}
 
+        # Who each pending request belongs to. Approvals and clarifications are
+        # keyed only by their own id, which is not secret — it travels to the
+        # browser over the WebSocket. Without an owner recorded alongside, any
+        # caller holding the id could answer on someone else's behalf and
+        # release their agent workflow.
+        self._approval_owners: Dict[str, str] = {}
+        self._clarification_owners: Dict[str, str] = {}
+
     def get_current_orchestration(self, user_id: str) -> Any:
         """Get existing orchestration workflow instance for user_id."""
         return self.orchestrations.get(user_id)
@@ -43,13 +64,19 @@ class OrchestrationConfig:
     # Approval helpers
     # ------------------------------------------------------------------ #
 
-    def set_approval_pending(self, plan_id: str) -> None:
-        """Mark approval pending and create/reset its event."""
+    def set_approval_pending(self, plan_id: str, user_id: Optional[str] = None) -> None:
+        """Mark approval pending, record its owner, and create/reset its event."""
         self.approvals[plan_id] = None
+        if user_id:
+            self._approval_owners[plan_id] = user_id
         if plan_id not in self._approval_events:
             self._approval_events[plan_id] = asyncio.Event()
         else:
             self._approval_events[plan_id].clear()
+
+    def approval_owner(self, plan_id: str) -> Optional[str]:
+        """Return the user a pending approval belongs to, or None if unrecorded."""
+        return self._approval_owners.get(plan_id)
 
     def set_approval_result(self, plan_id: str, approved: bool) -> None:
         """Set approval decision and trigger its event."""
@@ -97,21 +124,30 @@ class OrchestrationConfig:
                 self.cleanup_approval(plan_id)
 
     def cleanup_approval(self, plan_id: str) -> None:
-        """Remove approval tracking data and event."""
+        """Remove approval tracking data, owner and event."""
         self.approvals.pop(plan_id, None)
         self._approval_events.pop(plan_id, None)
+        self._approval_owners.pop(plan_id, None)
 
     # ------------------------------------------------------------------ #
     # Clarification helpers
     # ------------------------------------------------------------------ #
 
-    def set_clarification_pending(self, request_id: str) -> None:
-        """Mark clarification pending and create/reset its event."""
+    def set_clarification_pending(
+        self, request_id: str, user_id: Optional[str] = None
+    ) -> None:
+        """Mark clarification pending, record its owner, and create/reset its event."""
         self.clarifications[request_id] = None
+        if user_id:
+            self._clarification_owners[request_id] = user_id
         if request_id not in self._clarification_events:
             self._clarification_events[request_id] = asyncio.Event()
         else:
             self._clarification_events[request_id].clear()
+
+    def clarification_owner(self, request_id: str) -> Optional[str]:
+        """Return the user a pending clarification belongs to, or None if unrecorded."""
+        return self._clarification_owners.get(request_id)
 
     def set_clarification_result(self, request_id: str, answer: str) -> None:
         """Set clarification answer and trigger event."""
@@ -150,9 +186,10 @@ class OrchestrationConfig:
                 self.cleanup_clarification(request_id)
 
     def cleanup_clarification(self, request_id: str) -> None:
-        """Remove clarification tracking data and event."""
+        """Remove clarification tracking data, owner and event."""
         self.clarifications.pop(request_id, None)
         self._clarification_events.pop(request_id, None)
+        self._clarification_owners.pop(request_id, None)
 
 
 class ConnectionConfig:
@@ -241,13 +278,22 @@ class ConnectionConfig:
 
         process_id = self.user_to_process.get(user_id)
         if not process_id:
-            # Fallback: the LLM may have passed a wrong user_id (e.g. "default",
-            # "USER").  If there is exactly one connected user, use that instead.
-            if len(self.user_to_process) == 1:
+            # Development-only fallback: the MCP ask_user tool takes its user_id
+            # from the model (see ask_user_service.py), and the model sometimes
+            # supplies a placeholder like "default" or "USER". When exactly one
+            # user is connected, delivering to them recovers the question.
+            #
+            # This is deliberately confined to APP_ENV=dev. In a deployed
+            # environment it means handing one user's agent output — questions,
+            # plan content, results — to a different user who merely happens to
+            # be the only one connected. The durable fix is for the backend to
+            # supply the user_id from the orchestration that invoked the tool
+            # rather than asking the model to carry it.
+            if config.APP_ENV == "dev" and len(self.user_to_process) == 1:
                 fallback_user_id = next(iter(self.user_to_process))
                 logger.warning(
                     "No WebSocket for user_id '%s' — falling back to sole "
-                    "connected user '%s'",
+                    "connected user '%s' (APP_ENV=dev only)",
                     user_id,
                     fallback_user_id,
                 )
