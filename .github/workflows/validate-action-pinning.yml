@@ -33,7 +33,11 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  action-pinning:
+    # Named distinctly on purpose: `validate` was already the job name in
+    # validate-bicep-params.yml, and three checks all reporting as "validate"
+    # makes a red X on the PR ambiguous.
+    name: Actions pinned to digests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

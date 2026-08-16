@@ -42,7 +42,8 @@ env:
   BICEP_VERSION: v0.44.1
 
 jobs:
-  validate:
+  arm-sync:
+    name: Compiled ARM matches its Bicep
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -51,10 +52,16 @@ jobs:
       - name: Install Bicep ${{ env.BICEP_VERSION }}
         run: |
           set -euo pipefail
-          curl -fsSL -o /usr/local/bin/bicep \
+          # Installed under RUNNER_TEMP, not /usr/local/bin: the runner user
+          # cannot chmod there without sudo, and reaching for sudo to place a
+          # downloaded binary on the system path is the wrong trade for a
+          # single-job tool.
+          mkdir -p "${RUNNER_TEMP}/bin"
+          curl -fsSL -o "${RUNNER_TEMP}/bin/bicep" \
             "https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-x64"
-          chmod +x /usr/local/bin/bicep
-          bicep --version
+          chmod +x "${RUNNER_TEMP}/bin/bicep"
+          echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/bin/bicep" --version
 
       - name: Rebuild the compiled ARM
         run: |
@@ -65,6 +72,7 @@ jobs:
           done
 
       - name: Compare against what is committed
+        id: compare
         run: |
           set -uo pipefail
 
@@ -90,9 +98,11 @@ jobs:
           exit 1
 
       - name: Upload the rebuilt templates
-        # Uploaded on failure so the correct output can be downloaded and
-        # committed without installing a Bicep CLI locally.
-        if: failure()
+        # Only when the comparison itself failed. A bare `failure()` also fires
+        # when the install or build step died, and would then upload the files
+        # exactly as committed — presenting the stale templates as the
+        # regenerated ones, which is worse than uploading nothing.
+        if: failure() && steps.compare.outcome == 'failure'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: rebuilt-arm-templates
