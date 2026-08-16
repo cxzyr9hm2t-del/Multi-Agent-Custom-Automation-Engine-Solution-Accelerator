@@ -512,6 +512,11 @@ module backend_container_app './modules/compute/container-app.bicep' = {
         'OPTIONS'
       ]
     }
+    // Pinned to a single replica deliberately. The backend keeps orchestration
+    // handles, pending approvals, clarifications and WebSocket registrations in
+    // process memory (see orchestration/connection_config.py), so a second
+    // replica would strand approvals and socket messages on the wrong instance.
+    // This is a correctness constraint, not a cost setting.
     scaleSettings: {
       minReplicas: 1
       maxReplicas: 1

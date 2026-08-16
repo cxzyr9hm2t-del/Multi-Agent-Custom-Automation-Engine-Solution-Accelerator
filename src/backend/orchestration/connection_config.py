@@ -21,7 +21,19 @@ logger = logging.getLogger(__name__)
 
 
 class OrchestrationConfig:
-    """Configuration and in-memory state for Magentic orchestration workflows."""
+    """Configuration and in-memory state for Magentic orchestration workflows.
+
+    SCALING CONSTRAINT — this state lives in process memory, so the backend is
+    correct only at a single replica. With more than one, a WebSocket opened on
+    replica A cannot receive events from an orchestration running on replica B,
+    and an approval posted to A never reaches the coroutine awaiting it on B.
+
+    The Bicep templates pin the backend to minReplicas/maxReplicas = 1, and that
+    pin is load-bearing rather than a cost setting. Raising it silently breaks
+    approvals and WebSocket delivery. Lifting the constraint means moving
+    approval and clarification state to Cosmos or Redis and putting a backplane
+    behind the socket registry.
+    """
 
     def __init__(self):
         self.orchestrations: Dict[str, Any] = {}       # user_id -> workflow instance

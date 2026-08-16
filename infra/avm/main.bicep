@@ -1094,9 +1094,18 @@ module containerApp './modules/compute/container-app.bicep' = {
         'OPTIONS'
       ]
     }
+    // Pinned to a single replica regardless of enableScalability. The backend
+    // keeps orchestration handles, pending approvals, clarifications and
+    // WebSocket registrations in process memory (see
+    // orchestration/connection_config.py). At more than one replica a socket
+    // opened on one instance cannot receive events from an orchestration
+    // running on another, and an approval posted to one never reaches the
+    // coroutine awaiting it on the other — so plans hang at the approval gate
+    // with no error. Lifting this means moving that state to Cosmos or Redis
+    // and putting a backplane behind the socket registry.
     scaleSettings: {
       minReplicas: 1
-      maxReplicas: enableScalability ? 3 : 1
+      maxReplicas: 1
     }
     containers: [
       {

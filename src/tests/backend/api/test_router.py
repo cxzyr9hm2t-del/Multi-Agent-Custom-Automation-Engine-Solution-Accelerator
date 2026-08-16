@@ -257,10 +257,15 @@ class TestProcessRequest:
         assert resp.status_code == 400
 
     def test_team_not_found(self, rt):
+        """A missing team is a 404 and reaches the client as one.
+
+        The enclosing `except Exception` used to fold this deliberate 404 into
+        the generic 400 for team-retrieval errors.
+        """
         rt.store.get_current_team.return_value = None
         rt.store.get_team_by_id.return_value = None
         resp = rt.client.post("/api/v4/process_request", json=self._payload())
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
     def test_rai_failure(self, rt):
         rt.store.get_team_by_id.return_value = MagicMock()
@@ -426,7 +431,7 @@ class TestUserClarification:
     def test_team_not_found(self, rt):
         rt.store.get_team_by_id.return_value = None
         resp = rt.client.post("/api/v4/user_clarification", json=self._payload())
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
     def test_rai_failure(self, rt):
         rt.store.get_team_by_id.return_value = MagicMock()
@@ -819,13 +824,19 @@ class TestGetPlanById:
         assert resp.status_code == 400
 
     def test_no_plan_id(self, rt):
+        """Omitting plan_id is a 400, not the 500 the catch-all used to give."""
         resp = rt.client.get("/api/v4/plan")
-        assert resp.status_code == 500
+        assert resp.status_code == 400
 
     def test_plan_not_found(self, rt):
+        """A plan that does not resolve is a 404, not a 500.
+
+        Since the lookup is user-scoped, this is also the response for a plan
+        belonging to someone else.
+        """
         rt.store.get_plan_by_plan_id.return_value = None
         resp = rt.client.get("/api/v4/plan?plan_id=p1")
-        assert resp.status_code == 500
+        assert resp.status_code == 404
 
     def test_success(self, rt):
         plan = MagicMock()

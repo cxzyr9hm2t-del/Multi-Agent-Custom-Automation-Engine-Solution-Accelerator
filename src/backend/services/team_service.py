@@ -239,12 +239,17 @@ class TeamService:
         """
         Retrieve a team configuration by ID.
 
+        Access control is enforced by the database layer, not here: get_team
+        resolves only teams owned by the client's user or shared defaults, so a
+        team belonging to someone else returns None.
+
         Args:
             team_id: Configuration ID to retrieve
-            user_id: User ID for access control
+            user_id: Unused. Scoping comes from the memory context this service
+                was constructed with. Retained for call-site compatibility.
 
         Returns:
-            TeamConfiguration object or None if not found
+            TeamConfiguration object or None if not found or not visible
         """
         try:
             # Get the specific configuration using the team-specific method
@@ -307,10 +312,11 @@ class TeamService:
 
     async def get_all_team_configurations(self) -> List[TeamConfiguration]:
         """
-        Retrieve all team configurations for a user.
+        Retrieve every team configuration visible to the current user.
 
-        Args:
-            user_id: User ID to retrieve configurations for
+        That is the user's own teams plus shared defaults — the memory context
+        this service was constructed with carries the user, so this takes no
+        arguments.
 
         Returns:
             List of TeamConfiguration objects
@@ -328,15 +334,19 @@ class TeamService:
         """
         Delete a team configuration by ID.
 
+        Access control is enforced by the database layer, not here: delete_team
+        resolves the team through get_team first, which only sees teams owned by
+        the client's user or shared defaults, and refuses to delete a default.
+
         Args:
             team_id: Configuration ID to delete
-            user_id: User ID for access control
+            user_id: Unused. Scoping comes from the memory context this service
+                was constructed with. Retained for call-site compatibility.
 
         Returns:
-            True if deleted successfully, False if not found
+            True if deleted successfully, False if not found or not deletable
         """
         try:
-            # First, verify the configuration exists and belongs to the user
             success = await self.memory_context.delete_team(team_id)
             if success:
                 self.logger.info("Successfully deleted team configuration: %s", team_id)

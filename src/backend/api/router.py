@@ -339,6 +339,10 @@ async def process_request(
                 status_code=404,
                 detail=f"Team configuration '{team_id}' not found or access denied",
             )
+    except HTTPException:
+        # The 404 above is deliberate; re-raise it rather than folding it into
+        # the generic 400 below.
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -824,6 +828,10 @@ async def user_clarification(
                 status_code=404,
                 detail=f"Team configuration '{team_id}' not found or access denied",
             )
+    except HTTPException:
+        # The 404 above is deliberate; re-raise it rather than folding it into
+        # the generic 400 below.
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -1088,6 +1096,10 @@ async def upload_team_config(
     try:
         memory_store = await DatabaseFactory.get_database(user_id=user_id)
 
+    except HTTPException:
+        # The 404 above is deliberate; re-raise it rather than folding it into
+        # the generic 400 below.
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -1602,6 +1614,10 @@ async def get_plan_by_id(
                 "GetPlanId", {"status_code": 400, "detail": "no plan id"}
             )
             raise HTTPException(status_code=400, detail="no plan id")
+    except HTTPException:
+        # 404 "Plan not found" and 400 "no plan id" are deliberate; the
+        # catch-all below would otherwise report both as a 500.
+        raise
     except Exception as e:
         logging.error(f"Error retrieving plan: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error occurred")
@@ -1609,7 +1625,25 @@ async def get_plan_by_id(
 
 @app_router.get("/images/{blob_name:path}")
 async def get_generated_image(blob_name: str):
-    """Proxy a generated image from Azure Blob Storage."""
+    """Proxy a generated image from Azure Blob Storage.
+
+    AUTHORIZATION: this endpoint is a capability URL, not an authorized one. The
+    browser loads these through a plain ``<img src>`` inside the markdown
+    renderer, and an image request carries no custom headers — so the
+    ``x-ms-client-principal-id`` scheme the rest of the API uses cannot apply
+    here without breaking image rendering outright.
+
+    What stands in for authorization today is unguessability: names are
+    ``uuid4().png`` (see mcp_server/services/image_service.py), so possession of
+    the URL is the only way to reach one. That degrades if a URL leaks through
+    logs, a screenshot or a referrer.
+
+    Closing this properly needs one of two things, both out of scope for a
+    handler change: an authenticating front door (audit C1), after which the
+    session cookie rides along on the image request and the principal can be
+    checked here; or minting short-lived SAS URLs at generation time and
+    dropping the proxy altogether.
+    """
     from azure.storage.blob import BlobServiceClient
     from fastapi.responses import Response
 
@@ -1629,7 +1663,17 @@ async def get_generated_image(blob_name: str):
         blob_client = blob_service.get_blob_client(container=container, blob=blob_name)
         stream = blob_client.download_blob()
         data = stream.readall()
-        return Response(content=data, media_type="image/png")
+        return Response(
+            content=data,
+            media_type="image/png",
+            headers={
+                # The URL is the only secret protecting this content, so keep it
+                # out of shared caches and off referrers to other origins.
+                "Cache-Control": "private, no-store",
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     except Exception as exc:
         logging.error(f"Error retrieving image '{blob_name}': {exc}")
         raise HTTPException(status_code=404, detail="Image not found")

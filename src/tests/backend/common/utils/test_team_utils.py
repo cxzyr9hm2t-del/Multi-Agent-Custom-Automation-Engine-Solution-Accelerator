@@ -211,13 +211,21 @@ class TestCreateRAIAgent:
         assert call_args[1]['enable_code_interpreter'] is False
         assert call_args[1]['project_endpoint'] == "https://test.project.azure.com/"
         assert call_args[1]['mcp_config'] is None
-        assert call_args[1]['team_config'] is self.mock_team
+        # The agent is built from a copy, so the caller's configuration is not
+        # renamed to "RAI Team" underneath them — in the request path that
+        # object is the team document just read from Cosmos.
+        assert call_args[1]['team_config'] is self.mock_rai_team
+        assert call_args[1]['team_config'] is not self.mock_team
+        self.mock_team.model_copy.assert_called_once_with(deep=True)
         assert call_args[1]['memory_store'] is self.mock_memory_store
         
-        # Verify the team configuration was updated in place (source mutates team directly)
-        assert self.mock_team.team_id == "rai_team"
-        assert self.mock_team.name == "RAI Team"
-        assert self.mock_team.description == "Team responsible for Responsible AI checks"
+        # The RAI identity is stamped on the copy, never on the caller's object.
+        assert self.mock_rai_team.team_id == "rai_team"
+        assert self.mock_rai_team.name == "RAI Team"
+        assert (
+            self.mock_rai_team.description
+            == "Team responsible for Responsible AI checks"
+        )
         
         # Verify agent initialization
         mock_agent.open.assert_called_once()
@@ -277,36 +285,31 @@ class TestGetAgentResponse:
             assert result == "Expected response"
     
     @pytest.mark.asyncio
-    @patch('backend.common.utils.team_utils.logging')
-    async def test_get_agent_response_exception(self, mock_logging):
-        """Test getting agent response when exception occurs."""
-        # Setup
+    async def test_get_agent_response_propagates_exception(self):
+        """A stream failure raises rather than masquerading as a verdict.
+
+        This used to return the literal "TRUE", which the caller reads as
+        "unsafe, block". That blocks correctly but makes an infrastructure
+        failure indistinguishable from a real classification, and leaves the
+        caller unable to tell the agent itself is broken.
+        """
         mock_agent = Mock()
         mock_agent.invoke = Mock(side_effect=Exception("Agent error"))
-        
-        # Execute
-        result = await _get_agent_response(mock_agent, "test query")
-        
-        # Verify
-        assert result == "TRUE"  # Default to blocking on error
-        mock_logging.error.assert_called_once()
-    
+
+        with pytest.raises(Exception, match="Agent error"):
+            await _get_agent_response(mock_agent, "test query")
+
     @pytest.mark.asyncio
-    async def test_get_agent_response_iteration_error(self):
-        """Test getting agent response when async iteration fails."""
-        # Setup
+    async def test_get_agent_response_propagates_iteration_error(self):
+        """Async-iteration failures propagate too."""
         mock_agent = Mock()
-        
-        # Create a mock that will fail on async iteration
+
         mock_async_iter = Mock()
         mock_async_iter.__aiter__ = Mock(side_effect=Exception("Iteration error"))
         mock_agent.invoke = Mock(return_value=mock_async_iter)
-        
-        # Execute
-        result = await _get_agent_response(mock_agent, "test query")
-        
-        # Verify - should return TRUE on error
-        assert result == "TRUE"
+
+        with pytest.raises(Exception, match="Iteration error"):
+            await _get_agent_response(mock_agent, "test query")
 
 
 class TestRaiSuccess:
@@ -316,7 +319,11 @@ class TestRaiSuccess:
         """Setup for each test method."""
         self.mock_team_config = Mock(spec=TeamConfiguration)
         self.mock_memory_store = Mock(spec=DatabaseBase)
-    
+        # The RAI agent is cached for the lifetime of the process, so clear it
+        # between tests or a case inherits its neighbour's mock.
+        import backend.common.utils.team_utils as team_utils_mod
+        team_utils_mod._rai_agent = None
+
     @pytest.mark.asyncio
     @patch('backend.common.utils.team_utils.create_RAI_agent')
     @patch('backend.common.utils.team_utils._get_agent_response')
@@ -327,16 +334,17 @@ class TestRaiSuccess:
         mock_agent.close = AsyncMock()
         mock_create_agent.return_value = mock_agent
         mock_get_response.return_value = "FALSE"
-        
+
         # Execute
         result = await rai_success("Safe content", self.mock_team_config, self.mock_memory_store)
-        
+
         # Verify
         assert result is True
         mock_create_agent.assert_called_once_with(self.mock_team_config, self.mock_memory_store)
         mock_get_response.assert_called_once_with(mock_agent, "Safe content")
-        mock_agent.close.assert_called_once()
-    
+        # The agent is reused, not torn down after every check.
+        mock_agent.close.assert_not_called()
+
     @pytest.mark.asyncio
     @patch('backend.common.utils.team_utils.create_RAI_agent')
     @patch('backend.common.utils.team_utils._get_agent_response')
@@ -347,33 +355,100 @@ class TestRaiSuccess:
         mock_agent.close = AsyncMock()
         mock_create_agent.return_value = mock_agent
         mock_get_response.return_value = "TRUE"
-        
+
         # Execute
         result = await rai_success("Unsafe content", self.mock_team_config, self.mock_memory_store)
-        
+
         # Verify
         assert result is False
         mock_create_agent.assert_called_once_with(self.mock_team_config, self.mock_memory_store)
         mock_get_response.assert_called_once_with(mock_agent, "Unsafe content")
-        mock_agent.close.assert_called_once()
-    
+        mock_agent.close.assert_not_called()
+
     @pytest.mark.asyncio
     @patch('backend.common.utils.team_utils.create_RAI_agent')
     @patch('backend.common.utils.team_utils._get_agent_response')
-    async def test_rai_success_response_contains_false(self, mock_get_response, mock_create_agent):
-        """Test RAI success when response contains FALSE in longer text."""
-        # Setup
+    async def test_rai_success_blocks_an_ambiguous_verdict(
+        self, mock_get_response, mock_create_agent
+    ):
+        """A verdict that merely *contains* FALSE does not pass.
+
+        The classifier is instructed to answer with exactly one word. Accepting
+        any response containing "FALSE" meant prose such as "the content is
+        safe, but FALSE positives are possible" would let content through, so
+        anything unrecognised now blocks.
+        """
         mock_agent = Mock()
         mock_agent.close = AsyncMock()
         mock_create_agent.return_value = mock_agent
         mock_get_response.return_value = "The content is safe. Response: FALSE"
-        
-        # Execute
-        result = await rai_success("Content to check", self.mock_team_config, self.mock_memory_store)
-        
-        # Verify
+
+        result = await rai_success(
+            "Content to check", self.mock_team_config, self.mock_memory_store
+        )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    @patch('backend.common.utils.team_utils.create_RAI_agent')
+    @patch('backend.common.utils.team_utils._get_agent_response')
+    async def test_rai_success_tolerates_trailing_punctuation(
+        self, mock_get_response, mock_create_agent
+    ):
+        """A one-word verdict with a full stop is still a one-word verdict."""
+        mock_agent = Mock()
+        mock_create_agent.return_value = mock_agent
+        mock_get_response.return_value = " false.\n"
+
+        result = await rai_success(
+            "Safe content", self.mock_team_config, self.mock_memory_store
+        )
+
         assert result is True
-    
+
+    @pytest.mark.asyncio
+    @patch('backend.common.utils.team_utils.create_RAI_agent')
+    @patch('backend.common.utils.team_utils._get_agent_response')
+    async def test_rai_success_reuses_the_cached_agent(
+        self, mock_get_response, mock_create_agent
+    ):
+        """The Foundry agent is built once, not per request."""
+        mock_agent = Mock()
+        mock_create_agent.return_value = mock_agent
+        mock_get_response.return_value = "FALSE"
+
+        await rai_success("one", self.mock_team_config, self.mock_memory_store)
+        await rai_success("two", self.mock_team_config, self.mock_memory_store)
+
+        mock_create_agent.assert_called_once()
+        assert mock_get_response.await_count == 2
+
+    @pytest.mark.asyncio
+    @patch('backend.common.utils.team_utils.create_RAI_agent')
+    @patch('backend.common.utils.team_utils._get_agent_response')
+    async def test_rai_success_discards_a_failing_agent(
+        self, mock_get_response, mock_create_agent
+    ):
+        """A wedged agent must not block every subsequent check.
+
+        The classifier fails closed, so a cached agent that always errors would
+        deny every request for the life of the process if it were kept.
+        """
+        failing_agent = Mock()
+        failing_agent.close = AsyncMock()
+        working_agent = Mock()
+        mock_create_agent.side_effect = [failing_agent, working_agent]
+        mock_get_response.side_effect = [Exception("stream died"), "FALSE"]
+
+        first = await rai_success("one", self.mock_team_config, self.mock_memory_store)
+        second = await rai_success("two", self.mock_team_config, self.mock_memory_store)
+
+        assert first is False
+        assert second is True
+        failing_agent.close.assert_awaited_once()
+        assert mock_create_agent.await_count == 2
+
+
     @pytest.mark.asyncio
     @patch('backend.common.utils.team_utils.create_RAI_agent')
     async def test_rai_success_agent_creation_fails(self, mock_create_agent):

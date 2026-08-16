@@ -116,6 +116,7 @@ class AppConfig:
         self._ai_project_client = None
 
         self._agents = {}
+        self._user_browser_languages: dict[str, str] = {}
 
     def get_azure_credential(self, client_id=None):
         """
@@ -278,21 +279,30 @@ class AppConfig:
             logging.error("Failed to create AIProjectClient: %s", exc)
             raise
 
-    def get_user_local_browser_language(self) -> str:
-        """Get the user's local browser language from environment variables.
-
-        Returns:
-            The user's local browser language or 'en-US' if not set
-        """
-        return self._get_optional("USER_LOCAL_BROWSER_LANGUAGE", "en-US")
-
-    def set_user_local_browser_language(self, language: str):
-        """Set the user's local browser language in environment variables.
+    def get_user_local_browser_language(self, user_id: str) -> str:
+        """Get a user's browser language.
 
         Args:
+            user_id: The user whose language to read
+
+        Returns:
+            That user's browser language, or 'en-US' if none was recorded
+        """
+        return self._user_browser_languages.get(user_id, "en-US")
+
+    def set_user_local_browser_language(self, user_id: str, language: str) -> None:
+        """Record a user's browser language.
+
+        This used to write ``os.environ["USER_LOCAL_BROWSER_LANGUAGE"]``, which
+        made one user's locale the whole process's locale and mutated the
+        environment at request time. It is now keyed per user and held in
+        memory alongside the other per-user state.
+
+        Args:
+            user_id: The user the language belongs to
             language: The language code to set (e.g., 'en-US')
         """
-        os.environ["USER_LOCAL_BROWSER_LANGUAGE"] = language
+        self._user_browser_languages[user_id] = language
 
     # Get agent team list by user_id dictionary index
     def get_agents(self) -> dict[str, list]:
