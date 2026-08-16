@@ -7,7 +7,7 @@ TeamConfig. WebSockets are represented by AsyncMock/MagicMock.
 
 import asyncio
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -279,13 +279,39 @@ class TestSendStatusUpdateAsync:
         await cc.send_status_update_async("m", user_id="")  # early return
 
     @pytest.mark.asyncio
-    async def test_fallback_single_user(self):
+    async def test_fallback_single_user_in_dev(self):
+        """In dev, a message for an unknown user reaches the sole connected one.
+
+        The MCP ask_user tool takes its user_id from the model, which sometimes
+        supplies a placeholder; this recovers the question locally.
+        """
+        import backend.orchestration.connection_config as cc_mod
+
         cc = ConnectionConfig()
         ws = AsyncMock()
         cc.connections["proc1"] = ws
         cc.user_to_process["real"] = "proc1"
-        await cc.send_status_update_async({"k": "v"}, user_id="wrong")
+        with patch.object(cc_mod.config, "APP_ENV", "dev"):
+            await cc.send_status_update_async({"k": "v"}, user_id="wrong")
         ws.send_text.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_outside_dev(self):
+        """Outside dev the message is dropped rather than misdelivered.
+
+        Falling back here would hand one user's agent output — questions, plan
+        content, results — to a different user who merely happens to be the
+        only one connected.
+        """
+        import backend.orchestration.connection_config as cc_mod
+
+        cc = ConnectionConfig()
+        ws = AsyncMock()
+        cc.connections["proc1"] = ws
+        cc.user_to_process["real"] = "proc1"
+        with patch.object(cc_mod.config, "APP_ENV", "prod"):
+            await cc.send_status_update_async({"k": "v"}, user_id="wrong")
+        ws.send_text.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_process_multiple_users(self):

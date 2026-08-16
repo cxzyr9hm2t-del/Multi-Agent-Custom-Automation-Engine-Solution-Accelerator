@@ -979,21 +979,46 @@ async def agent_message_user(
             status_code=401, detail="Missing or invalid user information"
         )
 
-    # Attach session_id to span if plan_id is available and capture for events
-    session_id = None
-    if agent_message.plan_id:
-        try:
-            memory_store = await DatabaseFactory.get_database(user_id=user_id)
-            plan = await memory_store.get_plan_by_plan_id(plan_id=agent_message.plan_id)
-            if plan and plan.session_id:
-                session_id = plan.session_id
-                span = trace.get_current_span()
-                if span:
-                    span.set_attribute("session_id", session_id)
-        except Exception:
-            pass  # Don't fail request if span attribute fails
+    # Authorize the write against the plan it targets.
+    #
+    # This handler appends to a plan's message stream and, on is_final, marks
+    # the plan completed with caller-supplied content. Without an ownership
+    # check any caller could forge agent output into someone else's transcript
+    # and close their plan out. The plan lookup is user-scoped, so a plan the
+    # caller does not own does not resolve.
+    if not agent_message.plan_id:
+        raise HTTPException(
+            status_code=400,
+            detail="plan_id is required to record an agent message",
+        )
 
-    # Set the approval in the orchestration config
+    try:
+        memory_store = await DatabaseFactory.get_database(user_id=user_id)
+        plan = await memory_store.get_plan_by_plan_id(plan_id=agent_message.plan_id)
+    except Exception as e:
+        # Fail closed: an authorization check that cannot run has not passed.
+        logger.error(
+            "Agent message authorization check failed for plan '%s': %s",
+            agent_message.plan_id, e,
+        )
+        raise HTTPException(status_code=500, detail="Internal server error") from e
+
+    if plan is None:
+        logger.warning(
+            "Rejected agent message for plan '%s' from user '%s'",
+            agent_message.plan_id, user_id,
+        )
+        track_event_if_configured(
+            "Error_Agent_Message_Forbidden",
+            {"plan_id": agent_message.plan_id, "user_id": user_id},
+        )
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    session_id = plan.session_id or None
+    if session_id:
+        span = trace.get_current_span()
+        if span:
+            span.set_attribute("session_id", session_id)
 
     try:
 
@@ -1085,20 +1110,25 @@ async def upload_team_config(
                 status_code=400, detail=f"Invalid JSON format: {str(e)}"
             ) from e
 
-        # Validate content with RAI before processing
-        if not team_id:
-            rai_valid, rai_error = await rai_validate_team_config(json_data, memory_store)
-            if not rai_valid:
-                track_event_if_configured(
-                    "Error_Config_RAI_Validation_Failed",
-                    {
-                        "status": "failed",
-                        "user_id": user_id,
-                        "filename": file.filename,
-                        "reason": rai_error,
-                    },
-                )
-                raise HTTPException(status_code=400, detail=rai_error)
+        # Validate content with RAI before processing.
+        #
+        # This runs on every upload, including updates. It was previously guarded
+        # by `if not team_id:`, so supplying any team_id skipped the check
+        # entirely — and a team configuration carries each agent's
+        # system_message, which is exactly the unvetted content this exists to
+        # screen before it reaches an agent's system prompt.
+        rai_valid, rai_error = await rai_validate_team_config(json_data, memory_store)
+        if not rai_valid:
+            track_event_if_configured(
+                "Error_Config_RAI_Validation_Failed",
+                {
+                    "status": "failed",
+                    "user_id": user_id,
+                    "filename": file.filename,
+                    "reason": rai_error,
+                },
+            )
+            raise HTTPException(status_code=400, detail=rai_error)
 
         track_event_if_configured(
             "Config_RAI_Validation_Passed",

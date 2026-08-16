@@ -495,9 +495,30 @@ class TestAgentMessage:
         assert resp.json()["status"] == "message recorded"
 
     def test_plan_service_error(self, rt):
+        plan = MagicMock()
+        plan.session_id = "sess-1"
+        rt.store.get_plan_by_plan_id.return_value = plan
         rt.plan_service.handle_agent_messages = AsyncMock(side_effect=Exception("boom"))
         resp = rt.client.post("/api/v4/agent_message", json=self._payload())
         assert resp.status_code == 200
+
+    def test_message_for_a_plan_you_do_not_own_is_rejected(self, rt):
+        """Appending to another user's transcript, and closing their plan out.
+
+        On is_final this handler sets overall_status=completed and overwrites
+        streaming_message with caller-supplied content, so the write is
+        authorized against the plan it targets.
+        """
+        rt.store.get_plan_by_plan_id.return_value = None
+        resp = rt.client.post("/api/v4/agent_message", json=self._payload())
+        assert resp.status_code == 404
+        rt.plan_service.handle_agent_messages.assert_not_called()
+
+    def test_message_without_plan_id_is_rejected(self, rt):
+        """With no plan_id the write can be neither attributed nor authorized."""
+        resp = rt.client.post("/api/v4/agent_message", json=self._payload(plan_id=""))
+        assert resp.status_code == 400
+        rt.plan_service.handle_agent_messages.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +592,21 @@ class TestUploadTeamConfig:
             "/api/v4/upload_team_config?team_id=given-id", files=self._file()
         )
         assert resp.status_code == 200
+
+    def test_rai_validation_runs_even_when_a_team_id_is_supplied(self, rt):
+        """Supplying a team_id must not skip content safety.
+
+        The check was guarded by `if not team_id:`, so `?team_id=anything`
+        bypassed it entirely — and a team configuration carries each agent's
+        system_message, the very content this screens before it reaches an
+        agent's system prompt.
+        """
+        rt.rai_validate_team_config.return_value = (False, "unsafe content")
+        resp = rt.client.post(
+            "/api/v4/upload_team_config?team_id=given-id", files=self._file()
+        )
+        assert resp.status_code == 400
+        rt.rai_validate_team_config.assert_called_once()
 
     def test_parse_value_error(self, rt):
         rt.team_service.validate_team_models.return_value = (True, [])

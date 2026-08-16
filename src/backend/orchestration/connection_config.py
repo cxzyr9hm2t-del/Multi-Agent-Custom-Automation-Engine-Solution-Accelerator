@@ -11,6 +11,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
+from common.config.app_config import config
 from common.models.messages import TeamConfiguration
 from fastapi import WebSocket
 from models.messages import WebsocketMessageType
@@ -265,13 +266,22 @@ class ConnectionConfig:
 
         process_id = self.user_to_process.get(user_id)
         if not process_id:
-            # Fallback: the LLM may have passed a wrong user_id (e.g. "default",
-            # "USER").  If there is exactly one connected user, use that instead.
-            if len(self.user_to_process) == 1:
+            # Development-only fallback: the MCP ask_user tool takes its user_id
+            # from the model (see ask_user_service.py), and the model sometimes
+            # supplies a placeholder like "default" or "USER". When exactly one
+            # user is connected, delivering to them recovers the question.
+            #
+            # This is deliberately confined to APP_ENV=dev. In a deployed
+            # environment it means handing one user's agent output — questions,
+            # plan content, results — to a different user who merely happens to
+            # be the only one connected. The durable fix is for the backend to
+            # supply the user_id from the orchestration that invoked the tool
+            # rather than asking the model to carry it.
+            if config.APP_ENV == "dev" and len(self.user_to_process) == 1:
                 fallback_user_id = next(iter(self.user_to_process))
                 logger.warning(
                     "No WebSocket for user_id '%s' — falling back to sole "
-                    "connected user '%s'",
+                    "connected user '%s' (APP_ENV=dev only)",
                     user_id,
                     fallback_user_id,
                 )
