@@ -7,6 +7,7 @@ from common.database.database_factory import DatabaseFactory
 from common.models.messages import (AgentMessageData, AgentMessageType,
                                     AgentType, PlanStatus)
 from common.utils.event_utils import track_event_if_configured
+from common.utils.image_assets import record_image_ownership
 from orchestration.connection_config import orchestration_config
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,16 @@ class PlanService:
             # Look for or implement something like: memory_store.add_agent_message(agent_msg)
             memory_store = await DatabaseFactory.get_database(user_id=user_id)
             await memory_store.add_agent_message(agent_msg)
+
+            # Any generated image referenced here reached this user through
+            # their own agent output, so this is where ownership is established.
+            await record_image_ownership(
+                memory_store,
+                f"{agent_msg.content}\n{agent_message.streaming_message or ''}",
+                user_id,
+                agent_msg.plan_id,
+            )
+
             if agent_message.is_final:
                 plan = await memory_store.get_plan(agent_msg.plan_id)
                 if plan is None:

@@ -37,6 +37,11 @@ sys.modules['common.database.database_factory'] = mock_database_factory
 mock_event_utils = MagicMock()
 sys.modules['common.utils.event_utils'] = mock_event_utils
 
+# Ownership recording is fire-and-forget from this service's point of view.
+mock_image_assets = MagicMock()
+mock_image_assets.record_image_ownership = AsyncMock()
+sys.modules['common.utils.image_assets'] = mock_image_assets
+
 # Create mock common.models.messages with enums
 class MockAgentType:
     HUMAN = MagicMock()

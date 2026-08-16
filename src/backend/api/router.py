@@ -1728,10 +1728,36 @@ async def get_generated_image(blob_name: str, token: str = Query(None)):
 
     if token:
         try:
-            resource_tokens.verify(token, PURPOSE_IMAGE, "")
+            requester = resource_tokens.verify(token, PURPOSE_IMAGE, "")
         except ResourceTokenError as exc:
             logging.warning("Rejected image request for '%s': %s", blob_name, exc)
             raise HTTPException(status_code=403, detail="Invalid or expired token")
+
+        # Check the requester against the recorded owner. Images generated
+        # before ownership was recorded have no entry; those fall back to
+        # token-only protection rather than breaking, so existing conversations
+        # keep rendering.
+        try:
+            memory_store = await DatabaseFactory.get_database(user_id=requester)
+            owner = await memory_store.get_image_asset(blob_name)
+        except Exception as exc:
+            logging.error("Image ownership lookup failed for '%s': %s", blob_name, exc)
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+        if owner is not None and owner.user_id != requester:
+            logging.warning(
+                "Rejected image '%s': owned by another user, requested by '%s'",
+                blob_name, requester,
+            )
+            track_event_if_configured(
+                "Error_Image_Forbidden",
+                {"blob_name": blob_name, "user_id": requester},
+            )
+            raise HTTPException(status_code=403, detail="Image not found")
+        if owner is None:
+            logging.info(
+                "Image '%s' has no ownership record; allowing on token alone", blob_name
+            )
 
     blob_url = config.AZURE_STORAGE_BLOB_URL
     container = config.AZURE_STORAGE_IMAGES_CONTAINER

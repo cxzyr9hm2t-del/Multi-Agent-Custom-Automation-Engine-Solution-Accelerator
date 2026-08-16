@@ -57,12 +57,24 @@ connecting, and keeps an image token refreshed in the background.
 Tokens are optional on both endpoints: when none is supplied the previous
 behaviour applies, so a deployment without the front door is unaffected.
 
-One limit worth stating plainly: an **image token proves the requester is an
-authenticated user, not that they own that image**. Generated blobs are stored
-under a `uuid4` name with no ownership record, so there is nothing to check
-against. This closes anonymous access, not cross-user access. Recording an owner
-at generation time (`src/mcp_server/services/image_service.py`) is what would
-allow the stronger check.
+### Image ownership
+
+The image proxy checks the token holder against a recorded owner, so an image
+belonging to another user is refused rather than merely requiring *some* valid
+token.
+
+The record cannot be written where the image is created: the MCP server's
+`generate_marketing_image` takes no user argument, and having the model carry
+one is the mechanism that proved unreliable for `ask_user`. The backend does
+know whose orchestration produced a message, so ownership is recorded there —
+the first time a blob name appears in a user's own agent output
+(`common/utils/image_assets.py`, called from `PlanService`). First writer wins,
+so a blob name echoed back by someone else cannot reassign ownership.
+
+Images generated before this existed have no record. Those fall back to
+token-only protection rather than failing, so existing conversations keep
+rendering; once your history has turned over you can tighten the handler to
+require a record.
 
 ### The signing key
 

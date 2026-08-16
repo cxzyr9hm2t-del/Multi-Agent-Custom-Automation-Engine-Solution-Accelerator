@@ -25,6 +25,7 @@ class DataType(str, Enum):
     current_team_agent = "current_team_agent"
     m_plan = "m_plan"
     m_plan_message = "m_plan_message"
+    image_asset = "image_asset"
 
 
 class AgentType(str, Enum):
@@ -257,6 +258,25 @@ class InputTask(BaseModel):
 
 class UserLanguage(BaseModel):
     language: str
+
+
+class ImageAsset(BaseDataModel):
+    """Records which user a generated image belongs to.
+
+    Generated images are stored under a uuid4 blob name by the MCP server, which
+    has no reliable way to know who asked for them — the tool takes no user
+    argument, and asking the model to supply one is exactly the mechanism that
+    proved unreliable for ask_user. The backend does know, so ownership is
+    recorded here when the image URL first appears in that user's agent output.
+
+    Without this the image proxy can only establish that a requester is *some*
+    authenticated user, not that the image is theirs.
+    """
+
+    data_type: Literal[DataType.image_asset] = DataType.image_asset
+    blob_name: str
+    user_id: str
+    plan_id: str = ""
 
 
 class AgentMessageData(BaseDataModel):

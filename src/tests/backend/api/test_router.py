@@ -925,6 +925,40 @@ class TestGetGeneratedImage:
         resp = rt.client.get("/api/v4/images/evil!.png")
         assert resp.status_code == 400
 
+    def _configure_storage(self, rt, monkeypatch):
+        cfg = MagicMock()
+        cfg.AZURE_STORAGE_BLOB_URL = "https://blob"
+        cfg.AZURE_STORAGE_IMAGES_CONTAINER = "images"
+        monkeypatch.setattr(router_mod, "config", cfg)
+
+    def test_an_invalid_token_is_rejected(self, rt, monkeypatch):
+        self._configure_storage(rt, monkeypatch)
+        resp = rt.client.get("/api/v4/images/pic.png?token=nonsense")
+        assert resp.status_code == 403
+
+    def test_an_image_owned_by_another_user_is_refused(self, rt, monkeypatch):
+        """The ownership record is what makes this more than 'some valid user'."""
+        resource_tokens = router_mod.resource_tokens
+        self._configure_storage(rt, monkeypatch)
+        rt.store.get_image_asset = AsyncMock(return_value=MagicMock(user_id="someone-else"))
+        token = resource_tokens.mint(resource_tokens.PURPOSE_IMAGE, "", "user-1", 60)
+
+        resp = rt.client.get(f"/api/v4/images/pic.png?token={token}")
+
+        assert resp.status_code == 403
+
+    def test_an_image_with_no_record_falls_back_to_token_only(self, rt, monkeypatch):
+        """Images generated before ownership was recorded must keep rendering."""
+        resource_tokens = router_mod.resource_tokens
+        self._configure_storage(rt, monkeypatch)
+        rt.store.get_image_asset = AsyncMock(return_value=None)
+        token = resource_tokens.mint(resource_tokens.PURPOSE_IMAGE, "", "user-1", 60)
+
+        resp = rt.client.get(f"/api/v4/images/pic.png?token={token}")
+
+        # Reaches blob storage (which is unreachable here) rather than 403ing.
+        assert resp.status_code != 403
+
 
 # ---------------------------------------------------------------------------
 # WebSocket /socket/{process_id}

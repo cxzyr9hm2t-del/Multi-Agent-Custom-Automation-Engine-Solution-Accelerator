@@ -14,6 +14,7 @@ from ..models.messages import (
     BaseDataModel,
     CurrentTeamAgent,
     DataType,
+    ImageAsset,
     Plan,
     Step,
     TeamConfiguration,
@@ -516,6 +517,25 @@ class CosmosDBClient(DatabaseBase):
         ]
 
         return await self.query_items(query, parameters, AgentMessageData)
+
+    async def add_image_asset(self, image_asset: ImageAsset) -> None:
+        """Record ownership of a generated image."""
+        await self.add_item(image_asset)
+
+    async def get_image_asset(self, blob_name: str) -> Optional[ImageAsset]:
+        """Look up who a generated image belongs to.
+
+        Deliberately not scoped to the current user: the image proxy compares
+        the recorded owner against the requester itself, and needs to tell
+        "belongs to someone else" apart from "no record exists".
+        """
+        query = "SELECT * FROM c WHERE c.blob_name=@blob_name AND c.data_type=@data_type"
+        parameters = [
+            {"name": "@blob_name", "value": blob_name},
+            {"name": "@data_type", "value": DataType.image_asset},
+        ]
+        results = await self.query_items(query, parameters, ImageAsset)
+        return results[0] if results else None
 
     async def add_team_agent(self, team_agent: CurrentTeamAgent) -> None:
         """Add an agent message to the database."""
