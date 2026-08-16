@@ -1,0 +1,113 @@
+name: Validate Action Pinning
+
+# Every third-party action must be referenced by a full 40-character commit
+# digest, not a tag. A tag is a movable pointer: whoever controls the action's
+# repository can repoint v6 at different code, and every workflow here — several
+# of which hold `id-token: write` and log into Azure — would run it on the next
+# push without any change landing in this repository.
+#
+# Dependabot still keeps them current: it understands digest pins and opens PRs
+# that bump the digest and the trailing version comment together, so pinning
+# costs no freshness. The comment after each digest is what makes the diff
+# readable; it is informational only and nothing reads it.
+#
+# Local `./.github/workflows/...` references are reusable workflows from this
+# repository and are exempt — they are already whatever this commit says.
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - '.github/workflows/**'
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+
+      - name: Every action reference is a commit digest
+        run: |
+          set -uo pipefail
+
+          unpinned=$(
+            grep -rhoE '^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*\S+' .github/workflows/*.yml \
+              | sed -E 's/.*uses:[[:space:]]*//' \
+              | grep -v '^\./' \
+              | grep -v '^docker://' \
+              | grep -vE '@[0-9a-f]{40}$' \
+              | sort -u || true
+          )
+
+          if [ -n "$unpinned" ]; then
+            echo "::error::These action references are not pinned to a commit digest:"
+            echo "$unpinned" | while read -r ref; do
+              echo "::error::  $ref"
+            done
+            echo ""
+            echo "Resolve each tag to its commit and pin it, keeping the tag as a comment:"
+            echo ""
+            echo "  git ls-remote https://github.com/OWNER/REPO 'refs/tags/TAG^{}'"
+            echo "  uses: OWNER/REPO@<40-char-sha>  # TAG"
+            echo ""
+            echo "The ^{} suffix peels an annotated tag to the commit it points at."
+            echo "Without it you get the tag object's own hash, which Actions cannot use."
+            exit 1
+          fi
+
+          echo "All action references are pinned to a commit digest."
+
+      - name: Workflows parse as YAML
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+
+          failed = []
+          paths = sorted(glob.glob(".github/workflows/*.yml"))
+          for path in paths:
+              try:
+                  yaml.safe_load(open(path))
+              except Exception as exc:
+                  failed.append((path, exc))
+
+          for path, exc in failed:
+              print(f"::error file={path}::{exc}")
+
+          print(f"{len(paths) - len(failed)}/{len(paths)} workflows parse.")
+          sys.exit(1 if failed else 0)
+          PY
+
+      - name: Every workflow declares top-level permissions
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+
+          # An absent permissions block inherits the repository default, which
+          # can be read-write for every scope. Declaring it per workflow keeps
+          # the grant visible in review rather than in a settings page.
+          missing = []
+          paths = sorted(glob.glob(".github/workflows/*.yml"))
+          for path in paths:
+              data = yaml.safe_load(open(path)) or {}
+              if "permissions" not in data:
+                  missing.append(path)
+
+          for path in missing:
+              print(f"::error file={path}::no top-level permissions: block")
+
+          print(f"{len(paths) - len(missing)}/{len(paths)} workflows declare permissions.")
+          sys.exit(1 if missing else 0)
+          PY

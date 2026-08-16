@@ -174,9 +174,9 @@ means retargeting the tag at `7fd0c49`.
 
 ### 3.3 L7 — action SHA pinning
 
-Not done, deliberately. Pinning GitHub Actions to commit digests requires
-resolving each tag to a SHA. Guessing them would be worse than leaving the tags
-in place, so this is left for `pinact` or an equivalent run with network access.
+~~Not done.~~ Closed on 2026-08-16 — see §7. The blocker was resolving tags to
+digests without guessing; `git ls-remote` does it authoritatively and was
+available all along.
 
 ### 3.4 Findings that remain open by design
 
@@ -332,3 +332,88 @@ afterwards, so the router's token tests began verifying signatures against a
 Mock and passed for the wrong reason. The stub is now installed only for the
 duration of the import and removed immediately after. Tests that pass alone and
 fail in the suite — or vice versa — have been the recurring hazard in this tree.
+
+---
+
+## 7. Automation
+
+Added 2026-08-16. Four pieces of recurring manual work from this audit are now
+enforced or performed by CI. Each replaces something that had already gone
+wrong once.
+
+### 7.1 Action digest pinning (closes L7)
+
+The blocker recorded in §3.3 was that pinning needs each tag resolved to a
+commit, and guessing is worse than not pinning. `git ls-remote <repo>
+'refs/tags/<tag>^{}'` resolves it authoritatively — the `^{}` peels an
+annotated tag to the commit it points at, where the bare ref gives the tag
+object's own hash, which Actions cannot use.
+
+**70 references across 24 workflows** now carry a 40-character digest with the
+tag as a trailing comment. 18 distinct actions were resolved; none failed to
+resolve, so nothing was left on a tag.
+
+Why it matters here specifically: a tag is a movable pointer under someone
+else's control, and several of these workflows hold `id-token: write` and log
+into Azure. Repointing `v6` would run different code on the next push with no
+change landing in this repository. Dependabot already covers the
+`github-actions` ecosystem, understands digest pins, and bumps the digest and
+comment together — so pinning costs nothing in freshness.
+
+`validate-action-pinning.yml` fails the build if an unpinned reference
+reappears. It carries two further gates in the same job: every workflow must
+parse as YAML, and every workflow must declare top-level `permissions:` — which
+turns the L6 fix from a state into an invariant.
+
+### 7.2 Compiled ARM drift (`validate-arm-sync.yml`)
+
+The drift measured in §1.1 accumulated because nothing checked. The job
+rebuilds all three `main.json` with **Bicep 0.44.1** — pinned to the version in
+each file's `metadata._generator`, since a newer compiler reformats the whole
+5 MB file and the check would then fail on compiler drift rather than content
+drift — and fails on any difference. On failure it uploads the rebuilt
+templates as an artifact, so the fix does not require a local Bicep install.
+
+Nothing is grandfathered: the check passes at this commit, verified by running
+it before committing.
+
+### 7.3 Frontend tests in CI
+
+`src/utils/utils.test.ts` (§6.2) was not running anywhere. `npm test` is now a
+step in `frontend-lint.yml`, which could not have existed before — the command
+exited non-zero with "No test files found" until that file landed.
+
+### 7.4 Release tagging (`release-tag.yml`)
+
+§3.1 records five failed attempts to push a tag, all bare 403s, from a grant
+covering `refs/heads/claude/*` but not `refs/tags/*`. The runner's
+`GITHUB_TOKEN` has `contents: write` and no such restriction, so the tag is
+created there instead.
+
+`workflow_dispatch` only — nothing fires on its own. Inputs are the tag, an
+optional target SHA, an optional annotation, and whether to publish a release.
+Three refusals before anything is created: a tag name that is not
+`vMAJOR.MINOR.PATCH[-prerelease]`, a tag that already exists, and — the one
+that matters most — **a target that is not an ancestor of the default branch**,
+which is how a stale local SHA or a rebased-away branch becomes a release.
+Release notes come from the matching `CHANGELOG.md` section when there is one,
+otherwise from GitHub's generated notes.
+
+This unblocks §3.2: `v0.1.0` at `452ff53` and `v0.1.0-rc.1` at `627f18a` can
+now be created by running the workflow twice, the second with **prerelease**
+ticked. Both SHAs are ancestors of `main`, so both pass the ancestry check.
+
+### 7.5 Verified before committing
+
+| Check | Result |
+|---|---|
+| Pinning gate against the tree | **passes** — 0 unpinned |
+| Pinning gate with a tag reintroduced | **fails as intended** — caught `actions/checkout@v6` |
+| All workflows parse | **30/30** |
+| All workflows declare `permissions:` | **30/30** |
+| ARM sync gate | **passes** — rebuild matches what is committed |
+| `npm test` | **5 passed** |
+
+The negative test matters more than the positive one: a gate that passes
+because its detection is broken is worse than no gate, and this suite has
+already produced one of those (§6.3).

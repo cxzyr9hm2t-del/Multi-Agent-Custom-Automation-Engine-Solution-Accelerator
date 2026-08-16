@@ -292,7 +292,7 @@ and what could not be completed — is in
 | L4 | Fixed | `delete_team_agent` is annotated `-> bool`. |
 | L5 | Fixed | The Dependabot auto-merge now refuses to merge unless CI reports completed, non-failing checks. |
 | L6 | Fixed | All 27 workflows carry a top-level `permissions:` block, following the repository's own `azure-dev.yml` convention. |
-| L7 | **Not done** | Pinning actions to commit SHAs needs each tag resolved to a digest. Guessing them would be worse than leaving them, so this is left for `pinact` or an equivalent tool run with network access. |
+| L7 | Fixed | All 70 third-party action references across 24 workflows are pinned to 40-character commit digests, each resolved with `git ls-remote 'refs/tags/TAG^{}'` rather than guessed, with the tag kept as a trailing comment. A new `validate-action-pinning.yml` fails the build if an unpinned reference reappears, and also enforces that every workflow parses and declares top-level `permissions:` (L6). Dependabot already tracks the `github-actions` ecosystem and understands digest pins, so freshness is unaffected. |
 | L8 | Fixed | `WebWarning.svg` was not a vector: it was one 2048×2048 base64 PNG (4.4 MB decoded) wrapped in an SVG and displayed at 128×128. Re-encoded at 384×384 — 6.2 MB → 207 KB, 3.3% of the original. |
 
 ### Follow-on work this produced
