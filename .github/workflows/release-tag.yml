@@ -90,6 +90,67 @@ jobs:
           echo "Tagging $target"
           git --no-pager log -1 --format='  %h %s' "$target"
 
+      - name: The four version sources agree with the tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          TARGET: ${{ steps.resolve.outputs.target }}
+        run: |
+          set -euo pipefail
+
+          # Read the versions as they were AT THE TAGGED COMMIT, not as they are
+          # now — tagging an older commit is legitimate, and comparing against
+          # the working tree would compare the wrong thing.
+          #
+          # This is the failure this check exists for: the four sources drifting
+          # apart, so a release claims a version that only three quarters of the
+          # tree actually carries. A pre-release suffix (v0.1.0-rc.1) is allowed
+          # to differ, since Python normalises 0.1.0-rc.1 to 0.1.0rc1 and the
+          # npm and Python spellings legitimately diverge.
+          version="${INPUT_TAG#v}"
+
+          read_at() { git show "${TARGET}:$1" 2>/dev/null || true; }
+
+          backend=$(read_at src/backend/pyproject.toml | awk -F'"' '/^version *=/ {print $2; exit}')
+          app_py=$(read_at src/App/pyproject.toml     | awk -F'"' '/^version *=/ {print $2; exit}')
+          mcp=$(read_at src/mcp_server/__init__.py    | awk -F'"' '/^__version__ *=/ {print $2; exit}')
+          app_js=$(read_at src/App/package.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)
+
+          echo "tag                        $version"
+          echo "src/backend/pyproject.toml $backend"
+          echo "src/App/pyproject.toml     $app_py"
+          echo "src/App/package.json       $app_js"
+          echo "src/mcp_server/__init__.py $mcp"
+
+          # Compare on the normalised form: strip separators and lowercase, so
+          # 0.1.0-rc.1, 0.1.0rc1 and 0.1.0.rc1 all compare equal.
+          #
+          # sed with an explicit class, not `tr -d '.-_'`: in tr that is the
+          # RANGE . to _, which deletes every digit and turns each version into
+          # a couple of letters that then miscompare. It read as a three-
+          # character set and silently was not one.
+          norm() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed 's/[._-]//g'; }
+          want=$(norm "$version")
+
+          mismatch=0
+          for pair in "backend:$backend" "app_py:$app_py" "app_js:$app_js" "mcp:$mcp"; do
+            name="${pair%%:*}"; value="${pair#*:}"
+            if [ -z "$value" ]; then
+              echo "::error::could not read a version for $name at $TARGET"
+              mismatch=1
+            elif [ "$(norm "$value")" != "$want" ]; then
+              echo "::error::$name is '$value' at $TARGET, but the tag claims '$version'"
+              mismatch=1
+            fi
+          done
+
+          if [ "$mismatch" -ne 0 ]; then
+            echo ""
+            echo "Refusing to tag: the commit does not carry the version the tag claims."
+            exit 1
+          fi
+
+          echo "All four version sources agree with $version."
+
       - name: Create and push the annotated tag
         env:
           INPUT_TAG: ${{ inputs.tag }}
