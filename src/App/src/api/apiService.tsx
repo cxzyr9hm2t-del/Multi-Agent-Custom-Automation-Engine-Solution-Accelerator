@@ -33,6 +33,8 @@ const API_ENDPOINTS = {
     HUMAN_CLARIFICATION: '/v4/user_clarification',
     USER_BROWSER_LANGUAGE: '/user_browser_language',
     AGENT_MESSAGE: '/v4/agent_message',
+    SOCKET_TOKEN: '/v4/socket_token',
+    IMAGE_TOKEN: '/v4/image_token',
 };
 
 // Simple cache implementation
@@ -267,6 +269,29 @@ export class APIService {
         });
         return response;
     }
+    /**
+     * Mint a short-lived token authorizing a WebSocket connection to a plan.
+     * Browsers cannot set headers on a handshake, so the token rides in the
+     * query string instead.
+     */
+    async getSocketToken(planId: string): Promise<{ token: string; expires_in: number }> {
+        return apiClient.post<{ token: string; expires_in: number }>(
+            `${API_ENDPOINTS.SOCKET_TOKEN}?plan_id=${encodeURIComponent(planId)}`,
+            {}
+        );
+    }
+
+    /**
+     * Mint a short-lived token for loading generated images, which are fetched
+     * by a plain <img src> and so cannot carry an Authorization header.
+     */
+    async getImageToken(): Promise<{ token: string; expires_in: number }> {
+        return apiClient.post<{ token: string; expires_in: number }>(
+            API_ENDPOINTS.IMAGE_TOKEN,
+            {}
+        );
+    }
+
     async sendAgentMessage(data: AgentMessageResponse): Promise<AgentMessage> {
         const result = await apiClient.post<AgentMessage>(API_ENDPOINTS.AGENT_MESSAGE, data);
         return result;

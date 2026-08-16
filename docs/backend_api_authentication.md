@@ -38,33 +38,49 @@ the browser login/redirect flow is not used.
 ## Read this before enabling it
 
 Turning this on rejects any request that does not carry a valid bearer token.
-Two things in this application cannot carry one:
+Two things in this application cannot send one — generated images, loaded by a
+plain `<img src>`, and the WebSocket, because browsers cannot set headers on a
+handshake.
 
-| What | Why | Consequence |
+**Both are handled**, by short-lived signed tokens that travel in the query
+string instead (`src/backend/common/utils/resource_tokens.py`):
+
+| Endpoint | How it authenticates | Bound to |
 |---|---|---|
-| `GET /api/v4/images/{blob}` | The browser loads these through a plain `<img src>` in the markdown renderer. An image request carries no `Authorization` header. | Generated images stop rendering — every image request 401s. |
-| `GET /api/v4/socket/{plan_id}` | Browsers cannot set headers on a WebSocket handshake. This is why the socket takes its identity as a query parameter in the first place. | Live plan streaming stops connecting. |
+| `GET /api/v4/images/{blob}` | `?token=` from `POST /api/v4/image_token` | the user; 15 min |
+| `GET /api/v4/socket/{plan}` | `?token=` from `POST /api/v4/socket_token` | the user **and** that plan; 2 min |
 
-Neither is solved by the front door. Both need a separate mechanism, and both
-should be settled **before** you enable this in an environment people are using:
+Both minting endpoints are ordinary authenticated HTTP calls, so they work
+behind the front door. The frontend fetches a socket token immediately before
+connecting, and keeps an image token refreshed in the background.
 
-- **Images** — mint short-lived SAS URLs at generation time
-  (`src/mcp_server/services/image_service.py`) and drop the proxy, or issue a
-  short-lived signed token the frontend appends to the image URL.
-- **WebSocket** — pass a short-lived backend-issued token as a query parameter
-  and validate it in the handler, or move the socket behind the same origin as
-  the frontend so a session cookie applies.
+Tokens are optional on both endpoints: when none is supplied the previous
+behaviour applies, so a deployment without the front door is unaffected.
 
-Until then, an enabled front door secures the HTTP API and breaks those two
-features. That trade may well be the right one for a locked-down environment —
-it just should not be a surprise.
+One limit worth stating plainly: an **image token proves the requester is an
+authenticated user, not that they own that image**. Generated blobs are stored
+under a `uuid4` name with no ownership record, so there is nothing to check
+against. This closes anonymous access, not cross-user access. Recording an owner
+at generation time (`src/mcp_server/services/image_service.py`) is what would
+allow the stronger check.
 
-The frontend also has to acquire and send a token for the API's audience. It
-currently sends `Authorization: Bearer` from `localStorage.token`
-(`src/App/src/api/httpClient.ts`), which nothing in the app populates. Wiring
-that up (MSAL, or the App Service token store) is the remaining piece.
+### The signing key
 
----
+Tokens are signed with `API_TOKEN_SIGNING_KEY` when set. When it is not, a
+random key is generated once per process — sound while the backend runs at a
+single replica, which it does by design (see `OrchestrationConfig`). The cost is
+that a restart invalidates outstanding tokens; they are short-lived and re-minted
+on demand, so that is a refresh at worst. **Set the key explicitly if you ever
+lift the single-replica constraint**, or replicas will reject each other's
+tokens.
+
+### The frontend's own token
+
+The frontend must also send a bearer token for the API's audience on ordinary
+requests. At startup it reads one from the App Service token store
+(`/.auth/me`) and caches it; that requires the frontend's registration to have
+been granted the API scope in step 4 below. If the endpoint is absent the call
+is a silent no-op, so nothing changes for deployments without a front door.
 
 ## Creating the app registration
 

@@ -86,6 +86,17 @@ export function getApiUrl() {
     return API_URL;
 }
 
+let IMAGE_TOKEN: string | null = null;
+
+/**
+ * Store the short-lived token appended to generated-image URLs.
+ * Cleared by passing null; while unset, image URLs are emitted unchanged so
+ * deployments without the authenticating front door keep working.
+ */
+export function setImageToken(token: string | null) {
+    IMAGE_TOKEN = token;
+}
+
 export function resolveApiAssetUrl(url: string): string {
    if (!url) {
        return url;
@@ -95,7 +106,10 @@ export function resolveApiAssetUrl(url: string): string {
    if (idx === -1) {
        return url;
    }
-   const path = url.slice(idx); // drop any scheme+host before the image path
+   let path = url.slice(idx); // drop any scheme+host before the image path
+   if (IMAGE_TOKEN) {
+       path += `${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(IMAGE_TOKEN)}`;
+   }
    const apiUrl = getApiUrl();
    if (apiUrl && /^https?:\/\//i.test(apiUrl)) {
        try {

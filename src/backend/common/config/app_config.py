@@ -38,6 +38,12 @@ class AppConfig:
         )
         self.APP_ENV = self._get_required("APP_ENV", "prod")
 
+        # HMAC key for the short-lived resource tokens that let <img> and
+        # WebSocket requests authenticate without a header. Optional: when
+        # unset a per-process key is generated, which is sound while the
+        # backend runs at a single replica. See common/utils/resource_tokens.py.
+        self.API_TOKEN_SIGNING_KEY = self._get_optional("API_TOKEN_SIGNING_KEY")
+
         self.AZURE_COGNITIVE_SERVICES = self._get_optional(
             "AZURE_COGNITIVE_SERVICES", "https://cognitiveservices.azure.com/.default"
         )

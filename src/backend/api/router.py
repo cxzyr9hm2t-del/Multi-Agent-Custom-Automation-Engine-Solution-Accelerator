@@ -14,6 +14,11 @@ from common.database.database_factory import DatabaseFactory
 from common.models.messages import (InputTask, Plan, PlanStatus,
                                     TeamSelectionRequest)
 from common.utils.event_utils import track_event_if_configured
+from common.utils.resource_tokens import (DEFAULT_IMAGE_TTL_SECONDS,
+                                          DEFAULT_SOCKET_TTL_SECONDS,
+                                          PURPOSE_IMAGE, PURPOSE_SOCKET,
+                                          ResourceTokenError)
+from common.utils import resource_tokens
 from common.utils.team_utils import (find_first_available_team, rai_success,
                                      rai_validate_team_config)
 from fastapi import (APIRouter, BackgroundTasks, File, HTTPException, Query,
@@ -37,9 +42,69 @@ app_router = APIRouter(
 )
 
 
+@app_router.post("/socket_token")
+async def issue_socket_token(request: Request, plan_id: str = Query(...)):
+    """Mint a short-lived token authorizing a WebSocket connection to a plan.
+
+    Browsers cannot set headers on a WebSocket handshake, so the socket cannot
+    present a bearer token. The client calls this endpoint over ordinary
+    authenticated HTTP, then passes the returned token as a query parameter on
+    the handshake. The token is bound to this user and this plan and expires
+    within a couple of minutes.
+    """
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    if not user_id:
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid user information"
+        )
+
+    memory_store = await DatabaseFactory.get_database(user_id=user_id)
+    plan = await memory_store.get_plan_by_plan_id(plan_id=plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    return {
+        "token": resource_tokens.mint(
+            PURPOSE_SOCKET, plan_id, user_id, DEFAULT_SOCKET_TTL_SECONDS
+        ),
+        "expires_in": DEFAULT_SOCKET_TTL_SECONDS,
+    }
+
+
+@app_router.post("/image_token")
+async def issue_image_token(request: Request):
+    """Mint a short-lived token for loading generated images.
+
+    Generated images are rendered through a plain ``<img src>``, which carries
+    no headers. The frontend appends this token to the image URL.
+
+    The token proves the requester is an authenticated user; it does not prove
+    they own the specific image, because generated blobs carry no ownership
+    record (see the image proxy handler). It closes anonymous access, not
+    cross-user access.
+    """
+    authenticated_user = get_authenticated_user_details(request_headers=request.headers)
+    user_id = authenticated_user["user_principal_id"]
+    if not user_id:
+        raise HTTPException(
+            status_code=401, detail="Missing or invalid user information"
+        )
+
+    return {
+        "token": resource_tokens.mint(
+            PURPOSE_IMAGE, "", user_id, DEFAULT_IMAGE_TTL_SECONDS
+        ),
+        "expires_in": DEFAULT_IMAGE_TTL_SECONDS,
+    }
+
+
 @app_router.websocket("/socket/{process_id}")
 async def start_comms(
-    websocket: WebSocket, process_id: str, user_id: str = Query(None)
+    websocket: WebSocket,
+    process_id: str,
+    user_id: str = Query(None),
+    token: str = Query(None),
 ):
     """Web-Socket endpoint for real-time process status updates.
 
@@ -51,9 +116,25 @@ async def start_comms(
     """
     # Authorize BEFORE accepting. Closing an un-accepted WebSocket fails the
     # handshake outright rather than opening a stream and then dropping it.
-    if not user_id:
+    #
+    # A signed token is the strong path: it is issued by /socket_token to an
+    # authenticated caller and bound to this plan, so it establishes identity
+    # rather than merely asserting it. A bare user_id remains accepted for
+    # deployments with no front door in front of the API, where it is no weaker
+    # than the header scheme the rest of the API uses.
+    if token:
+        try:
+            user_id = resource_tokens.verify(token, PURPOSE_SOCKET, process_id)
+        except ResourceTokenError as exc:
+            logging.warning(
+                "[websocket] Refused connection to '%s': %s", process_id, exc
+            )
+            await websocket.close(code=WS_POLICY_VIOLATION)
+            return
+    elif not user_id:
         logging.info(
-            "[websocket] Refused connection to '%s': no user_id supplied", process_id
+            "[websocket] Refused connection to '%s': no token or user_id supplied",
+            process_id,
         )
         await websocket.close(code=WS_POLICY_VIOLATION)
         return
@@ -1624,28 +1705,33 @@ async def get_plan_by_id(
 
 
 @app_router.get("/images/{blob_name:path}")
-async def get_generated_image(blob_name: str):
+async def get_generated_image(blob_name: str, token: str = Query(None)):
     """Proxy a generated image from Azure Blob Storage.
 
-    AUTHORIZATION: this endpoint is a capability URL, not an authorized one. The
-    browser loads these through a plain ``<img src>`` inside the markdown
-    renderer, and an image request carries no custom headers — so the
-    ``x-ms-client-principal-id`` scheme the rest of the API uses cannot apply
-    here without breaking image rendering outright.
+    AUTHORIZATION: the browser loads these through a plain ``<img src>`` in the
+    markdown renderer, which carries no headers, so the principal-header scheme
+    the rest of the API uses cannot apply. A short-lived token from
+    ``/image_token`` travels in the query string instead.
 
-    What stands in for authorization today is unguessability: names are
-    ``uuid4().png`` (see mcp_server/services/image_service.py), so possession of
-    the URL is the only way to reach one. That degrades if a URL leaks through
-    logs, a screenshot or a referrer.
+    The token proves the requester is an authenticated user. It does **not**
+    prove they own this particular image: generated blobs are stored under a
+    ``uuid4`` name with no ownership record, so there is nothing to check
+    against. This closes anonymous access, not cross-user access. Recording an
+    owner at generation time (``mcp_server/services/image_service.py``) is what
+    would allow the stronger check.
 
-    Closing this properly needs one of two things, both out of scope for a
-    handler change: an authenticating front door (audit C1), after which the
-    session cookie rides along on the image request and the principal can be
-    checked here; or minting short-lived SAS URLs at generation time and
-    dropping the proxy altogether.
+    Tokens are optional so that deployments without the authenticating front
+    door keep working; when one is supplied it must be valid.
     """
     from azure.storage.blob import BlobServiceClient
     from fastapi.responses import Response
+
+    if token:
+        try:
+            resource_tokens.verify(token, PURPOSE_IMAGE, "")
+        except ResourceTokenError as exc:
+            logging.warning("Rejected image request for '%s': %s", blob_name, exc)
+            raise HTTPException(status_code=403, detail="Invalid or expired token")
 
     blob_url = config.AZURE_STORAGE_BLOB_URL
     container = config.AZURE_STORAGE_IMAGES_CONTAINER

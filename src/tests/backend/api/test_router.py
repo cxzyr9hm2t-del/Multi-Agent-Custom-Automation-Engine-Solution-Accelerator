@@ -527,6 +527,60 @@ class TestAgentMessage:
 
 
 # ---------------------------------------------------------------------------
+# /socket_token and /image_token
+# ---------------------------------------------------------------------------
+class TestResourceTokenEndpoints:
+    def test_socket_token_requires_a_user(self, rt):
+        _no_user(rt)
+        resp = rt.client.post("/api/v4/socket_token?plan_id=p-1")
+        assert resp.status_code == 401
+
+    def test_socket_token_is_bound_to_the_plan_and_the_caller(self, rt):
+        resource_tokens = router_mod.resource_tokens
+
+        rt.store.get_plan_by_plan_id.return_value = MagicMock()
+        resp = rt.client.post("/api/v4/socket_token?plan_id=p-1")
+
+        assert resp.status_code == 200
+        token = resp.json()["token"]
+        assert resource_tokens.verify(
+            token, resource_tokens.PURPOSE_SOCKET, "p-1"
+        ) == "user-1"
+
+    def test_socket_token_for_a_plan_you_do_not_own_is_404(self, rt):
+        """The plan lookup is user-scoped, so a foreign plan does not resolve."""
+        rt.store.get_plan_by_plan_id.return_value = None
+        resp = rt.client.post("/api/v4/socket_token?plan_id=someone-elses")
+        assert resp.status_code == 404
+
+    def test_image_token_requires_a_user(self, rt):
+        _no_user(rt)
+        resp = rt.client.post("/api/v4/image_token")
+        assert resp.status_code == 401
+
+    def test_image_token_is_issued_to_the_caller(self, rt):
+        resource_tokens = router_mod.resource_tokens
+
+        resp = rt.client.post("/api/v4/image_token")
+
+        assert resp.status_code == 200
+        token = resp.json()["token"]
+        assert resource_tokens.verify(
+            token, resource_tokens.PURPOSE_IMAGE, ""
+        ) == "user-1"
+
+    def test_a_socket_token_cannot_be_replayed_as_an_image_token(self, rt):
+        """Purpose is part of the signed payload."""
+        resource_tokens = router_mod.resource_tokens
+
+        rt.store.get_plan_by_plan_id.return_value = MagicMock()
+        socket_token = rt.client.post("/api/v4/socket_token?plan_id=p-1").json()["token"]
+
+        with pytest.raises(resource_tokens.ResourceTokenError):
+            resource_tokens.verify(socket_token, resource_tokens.PURPOSE_IMAGE, "")
+
+
+# ---------------------------------------------------------------------------
 # /upload_team_config
 # ---------------------------------------------------------------------------
 class TestUploadTeamConfig:
@@ -885,6 +939,45 @@ class TestWebSocket:
         ) as ws:
             ws.send_text("hello")
         rt.connection_config.add_connection.assert_called_once()
+
+    def test_connect_with_a_valid_token_is_accepted(self, rt):
+        """A signed token establishes identity rather than merely asserting it."""
+        resource_tokens = router_mod.resource_tokens
+
+        plan = MagicMock()
+        plan.session_id = "sess-1"
+        rt.store.get_plan_by_plan_id.return_value = plan
+        token = resource_tokens.mint(
+            resource_tokens.PURPOSE_SOCKET, "proc-1", "user-1", 60
+        )
+
+        with rt.client.websocket_connect(
+            f"/api/v4/socket/proc-1?token={token}"
+        ) as ws:
+            ws.send_text("hello")
+        rt.connection_config.add_connection.assert_called_once()
+
+    def test_connect_with_a_token_for_another_plan_is_refused(self, rt):
+        """Binding the token to a plan is what stops it being replayed."""
+        resource_tokens = router_mod.resource_tokens
+
+        plan = MagicMock()
+        plan.session_id = "sess-1"
+        rt.store.get_plan_by_plan_id.return_value = plan
+        token = resource_tokens.mint(
+            resource_tokens.PURPOSE_SOCKET, "some-other-plan", "user-1", 60
+        )
+
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect(f"/api/v4/socket/proc-1?token={token}"):
+                pass
+        rt.connection_config.add_connection.assert_not_called()
+
+    def test_connect_with_a_garbage_token_is_refused(self, rt):
+        with pytest.raises(Exception):
+            with rt.client.websocket_connect("/api/v4/socket/proc-1?token=nonsense"):
+                pass
+        rt.connection_config.add_connection.assert_not_called()
 
     def test_connect_without_user_id_is_refused(self, rt):
         """No identity, no socket — there is no anonymous default any more."""

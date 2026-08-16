@@ -1,4 +1,5 @@
 import { getApiUrl, getUserId } from '../api/config';
+import { apiService } from '../api/apiService';
 import { PlanDataService } from './PlanDataService';
 import { ParsedPlanApprovalRequest, StreamingPlanUpdate, StreamMessage, WebsocketMessageType } from '../models';
 
@@ -19,7 +20,7 @@ class WebSocketService {
     private heartbeatIntervalMs = 20000; // 20s client keepalive ping
 
 
-    private buildSocketUrl(processId?: string, planId?: string): string {
+    private buildSocketUrl(processId?: string, planId?: string, token?: string | null): string {
         const baseWsUrl = getApiUrl() || 'ws://localhost:8000';
         // Trim and remove trailing slashes
         let base = (baseWsUrl || '').trim().replace(/\/+$/, '');
@@ -33,8 +34,27 @@ class WebSocketService {
         const userId = getUserId();
         const hasApiSegment = /\/api(\/|$)/i.test(base);
         const socketPath = hasApiSegment ? '/v4/socket' : '/api/v4/socket';
-        const url = `${base}${socketPath}${processId ? `/${processId}` : `/${planId}`}?user_id=${userId || ''}`;
+        const target = processId ? processId : planId;
+        let url = `${base}${socketPath}/${target}?user_id=${userId || ''}`;
+        if (token) {
+            url += `&token=${encodeURIComponent(token)}`;
+        }
         return url;
+    }
+
+    /**
+     * Mint a short-lived socket token, or return null if the backend does not
+     * issue one. Falling back to the user_id query parameter keeps deployments
+     * without the authenticating front door working unchanged.
+     */
+    private async fetchSocketToken(target?: string): Promise<string | null> {
+        if (!target) return null;
+        try {
+            const { token } = await apiService.getSocketToken(target);
+            return token || null;
+        } catch {
+            return null;
+        }
     }
     connect(planId: string, processId?: string): Promise<void> {
         return new Promise((resolve, reject) => {
@@ -51,8 +71,26 @@ class WebSocketService {
                 this.intentionalDisconnect = false;
                 this.lastPlanId = planId;
                 this.lastProcessId = processId;
-                const wsUrl = this.buildSocketUrl(processId, planId);
-                this.ws = new WebSocket(wsUrl);
+                const target = processId ? processId : planId;
+                this.fetchSocketToken(target).then((token) => {
+                    const wsUrl = this.buildSocketUrl(processId, planId, token);
+                    this.openSocket(wsUrl, resolve, reject);
+                });
+                return;
+            } catch (error) {
+                this.isConnecting = false;
+                reject(error);
+            }
+        });
+    }
+
+    private openSocket(
+        wsUrl: string,
+        resolve: () => void,
+        reject: (reason?: unknown) => void
+    ): void {
+        try {
+            this.ws = new WebSocket(wsUrl);
 
                 this.ws.onopen = () => {
                     this.isConnecting = false;
@@ -94,11 +132,10 @@ class WebSocketService {
                     }
                     this.emit('error', { error: 'WebSocket connection error' });
                 };
-            } catch (error) {
-                this.isConnecting = false;
-                reject(error);
-            }
-        });
+        } catch (error) {
+            this.isConnecting = false;
+            reject(error);
+        }
     }
 
     disconnect(): void {
