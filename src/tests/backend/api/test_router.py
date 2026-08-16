@@ -578,20 +578,59 @@ class TestUploadTeamConfig:
         assert resp.status_code == 200
         assert resp.json()["team_id"] == "team-999"
 
-    def test_success_with_team_id(self, rt):
-        rt.team_service.validate_team_models.return_value = (True, [])
-        rt.team_service.validate_team_search_indexes.return_value = (True, [])
+    def _parsed_team(self, rt, name="MyTeam"):
         team_conf = MagicMock()
         team_conf.agents = []
         team_conf.starting_tasks = []
-        team_conf.name = "MyTeam"
-        team_conf.model_dump.return_value = {"name": "MyTeam"}
+        team_conf.name = name
+        team_conf.model_dump.return_value = {"name": name}
         rt.team_service.validate_and_parse_team_config.return_value = team_conf
-        rt.team_service.save_team_configuration.return_value = "given-id"
+        return team_conf
+
+    def test_success_with_team_id(self, rt):
+        """An update goes through update_team_configuration, never an insert.
+
+        Inserting the parsed document would land a duplicate of the same
+        team_id in a different Cosmos partition, because its session_id — the
+        partition key — is freshly generated on every parse.
+        """
+        rt.team_service.validate_team_models.return_value = (True, [])
+        rt.team_service.validate_team_search_indexes.return_value = (True, [])
+        self._parsed_team(rt)
+        rt.team_service.update_team_configuration = AsyncMock(return_value="given-id")
         resp = rt.client.post(
             "/api/v4/upload_team_config?team_id=given-id", files=self._file()
         )
         assert resp.status_code == 200
+        assert resp.json()["team_id"] == "given-id"
+        rt.team_service.update_team_configuration.assert_awaited_once()
+        rt.team_service.save_team_configuration.assert_not_called()
+
+    def test_update_of_unknown_team_is_404(self, rt):
+        rt.team_service.validate_team_models.return_value = (True, [])
+        rt.team_service.validate_team_search_indexes.return_value = (True, [])
+        self._parsed_team(rt)
+        rt.team_service.update_team_configuration = AsyncMock(
+            side_effect=LookupError("Team configuration 'nope' not found")
+        )
+        resp = rt.client.post(
+            "/api/v4/upload_team_config?team_id=nope", files=self._file()
+        )
+        assert resp.status_code == 404
+
+    def test_update_of_a_default_team_is_403(self, rt):
+        """Shared default teams are visible to everyone and editable by no one."""
+        rt.team_service.validate_team_models.return_value = (True, [])
+        rt.team_service.validate_team_search_indexes.return_value = (True, [])
+        self._parsed_team(rt)
+        rt.team_service.update_team_configuration = AsyncMock(
+            side_effect=PermissionError("shared default")
+        )
+        resp = rt.client.post(
+            "/api/v4/upload_team_config?team_id=00000000-0000-0000-0000-000000000001",
+            files=self._file(),
+        )
+        assert resp.status_code == 403
 
     def test_rai_validation_runs_even_when_a_team_id_is_supplied(self, rt):
         """Supplying a team_id must not skip content safety.

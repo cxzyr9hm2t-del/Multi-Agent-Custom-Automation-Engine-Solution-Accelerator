@@ -348,6 +348,92 @@ class TestTeamCrudOperations:
             await service.save_team_configuration(team_config)
 
     @pytest.mark.asyncio
+    async def test_update_preserves_identity_and_partition_key(self):
+        """The stored document's id, partition and provenance survive an update.
+
+        A freshly parsed upload carries newly generated id/team_id/session_id.
+        session_id is the Cosmos partition key, so writing those values would
+        insert a second copy of the same team under a different partition
+        instead of replacing the original.
+        """
+        mock_context = MagicMock()
+        existing = MockTeamConfiguration(
+            id="stored-doc-id",
+            session_id="stored-partition",
+            team_id="team-abc",
+            created="2026-01-01",
+            created_by="alice",
+            user_id="alice",
+        )
+        mock_context.get_team = AsyncMock(return_value=existing)
+        mock_context.update_team = AsyncMock()
+        service = TeamService(memory_context=mock_context)
+
+        incoming = MockTeamConfiguration(
+            id="freshly-generated-id",
+            session_id="freshly-generated-partition",
+            team_id="freshly-generated-team-id",
+            name="Renamed Team",
+            created="2026-08-16",
+            created_by="bob",
+            user_id="bob",
+        )
+
+        result = await service.update_team_configuration("team-abc", incoming)
+
+        assert result == "team-abc"
+        mock_context.update_team.assert_awaited_once_with(incoming)
+        mock_context.add_team.assert_not_called()
+        # Identity and partition come from the stored document...
+        assert incoming.id == "stored-doc-id"
+        assert incoming.session_id == "stored-partition"
+        assert incoming.team_id == "team-abc"
+        assert incoming.created == "2026-01-01"
+        assert incoming.created_by == "alice"
+        assert incoming.user_id == "alice"
+        # ...while the edited content is kept.
+        assert incoming.name == "Renamed Team"
+
+    @pytest.mark.asyncio
+    async def test_update_of_unknown_team_raises_lookup_error(self):
+        mock_context = MagicMock()
+        mock_context.get_team = AsyncMock(return_value=None)
+        mock_context.update_team = AsyncMock()
+        service = TeamService(memory_context=mock_context)
+
+        with pytest.raises(LookupError):
+            await service.update_team_configuration(
+                "missing", MockTeamConfiguration(id="x")
+            )
+        mock_context.update_team.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_of_default_team_raises_permission_error(self):
+        """get_team also resolves shared defaults; those are not editable."""
+        mock_context = MagicMock()
+        mock_context.get_team = AsyncMock(
+            return_value=MockTeamConfiguration(id="d", team_id="d", is_default=True)
+        )
+        mock_context.update_team = AsyncMock()
+        service = TeamService(memory_context=mock_context)
+
+        with pytest.raises(PermissionError):
+            await service.update_team_configuration("d", MockTeamConfiguration(id="x"))
+        mock_context.update_team.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_raises_value_error_on_db_error(self):
+        mock_context = MagicMock()
+        mock_context.get_team = AsyncMock(
+            return_value=MockTeamConfiguration(id="s", team_id="t")
+        )
+        mock_context.update_team = AsyncMock(side_effect=Exception("DB error"))
+        service = TeamService(memory_context=mock_context)
+
+        with pytest.raises(ValueError, match="Failed to update"):
+            await service.update_team_configuration("t", MockTeamConfiguration(id="x"))
+
+    @pytest.mark.asyncio
     async def test_get_team_configuration_success(self):
         mock_context = MagicMock()
         expected = MockTeamConfiguration(id="test-id", name="Test Team")

@@ -183,6 +183,56 @@ class TeamService:
             self.logger.error("Error saving team configuration: %s", str(e))
             raise ValueError(f"Failed to save team configuration: {str(e)}") from e
 
+    async def update_team_configuration(
+        self, team_id: str, team_config: TeamConfiguration
+    ) -> str:
+        """Replace an existing team configuration in place.
+
+        The caller supplies a freshly parsed configuration whose id, team_id and
+        session_id were all newly generated. session_id is the Cosmos partition
+        key, so persisting that document as-is lands a *second* copy of the same
+        team_id in a different partition instead of replacing the original —
+        after which get_team returns whichever of the two the query happens to
+        yield first. The stored document's identity, partition and provenance
+        are therefore carried over here, and the write is an upsert.
+
+        Ownership is enforced by get_team, which only resolves teams belonging
+        to this user (or shared defaults, which are refused below).
+
+        Raises:
+            LookupError: no such team is visible to this user.
+            PermissionError: the team is a shared default and is not editable.
+            ValueError: the update could not be persisted.
+        """
+        existing = await self.memory_context.get_team(team_id)
+        if existing is None:
+            raise LookupError(f"Team configuration '{team_id}' not found")
+        if existing.is_default:
+            raise PermissionError(
+                f"Team configuration '{team_id}' is a shared default and cannot be modified"
+            )
+
+        # Identity, partition key and provenance belong to the stored document,
+        # not to the freshly parsed upload.
+        team_config.id = existing.id
+        team_config.team_id = existing.team_id
+        team_config.session_id = existing.session_id
+        team_config.created = existing.created
+        team_config.created_by = existing.created_by
+        team_config.user_id = existing.user_id
+        team_config.is_default = existing.is_default
+
+        try:
+            await self.memory_context.update_team(team_config)
+        except Exception as e:
+            self.logger.error("Error updating team configuration: %s", str(e))
+            raise ValueError(f"Failed to update team configuration: {str(e)}") from e
+
+        self.logger.info(
+            "Successfully updated team configuration with ID: %s", existing.id
+        )
+        return existing.team_id
+
     async def get_team_configuration(
         self, team_id: str, user_id: str
     ) -> Optional[TeamConfiguration]:

@@ -1197,13 +1197,26 @@ async def upload_team_config(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-        # Save the configuration
+        # Save the configuration.
+        #
+        # An update must go through update_team_configuration rather than
+        # overwriting the ids on the parsed document and inserting it: the
+        # freshly generated session_id is the partition key, so an insert lands
+        # a duplicate of the same team_id in a different partition instead of
+        # replacing the original.
         try:
-            logger.debug("Saving team configuration for team_id=%s", team_id)
             if team_id:
-                team_configuration.team_id = team_id
-                team_configuration.id = team_id  # Ensure id is also set for updates
-            team_id = await team_service.save_team_configuration(team_configuration)
+                logger.debug("Updating team configuration for team_id=%s", team_id)
+                team_id = await team_service.update_team_configuration(
+                    team_id, team_configuration
+                )
+            else:
+                logger.debug("Creating a new team configuration")
+                team_id = await team_service.save_team_configuration(team_configuration)
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to save configuration: {str(e)}"
