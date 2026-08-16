@@ -19,7 +19,7 @@ the work.
 
 ## 1. Commits
 
-Eleven commits, `origin/main..HEAD`, in order. Each commit message states the
+Thirteen commits, `origin/main..HEAD`, in order. Each commit message states the
 finding it closes and the reasoning; they are the primary record and are
 deliberately detailed.
 
@@ -36,8 +36,50 @@ deliberately detailed.
 | `f33cd82` | feat: authenticate image and WebSocket requests that cannot send a header | C1 follow-ons |
 | `ff9820b` | feat: record image ownership so the proxy can check it | M7 |
 | `83802b9` | chore: clear the audit's hygiene backlog and record remediation status | L1–L8 |
+| `2d947fd` | docs: record the evidence for the remediation work | — |
+| `a003d48` | chore: regenerate the compiled ARM from the Bicep sources | — |
 
-**Diffstat vs `origin/main`:** 54 files changed, 2,901 insertions, 299 deletions.
+**Diffstat vs `origin/main`:** 58 files changed, 3,489 insertions, 359 deletions.
+
+The verification figures in §2 were taken at `83802b9`. The two commits
+after it change only documentation and the compiled ARM, so no Python,
+TypeScript or test file differs between `83802b9` and `a003d48` — the figures
+still describe the branch head.
+
+### 1.1 The compiled ARM
+
+`a003d48` closes something the PR had recorded as not done: the checked-in
+`main.json` files did not carry any of this work, because no Bicep CLI was
+available at the time. One was fetched and all three were rebuilt with **Bicep
+0.44.1**, matching the `_generator` version already recorded in the files, so
+the diff is content rather than formatting churn from a newer compiler.
+
+`azd` compiles `main.bicep` directly, so this never affected the deployment
+path — only what someone deploying from the ARM would get. The three infra
+changes were confirmed present in the compiled output by reading it back:
+`backendAuthClientId` is a parameter of all three templates and reaches the
+backend container-app module in both flavours; the MCP module is invoked with
+`ingressExternal: false`; the backend scale block is `minReplicas`/
+`maxReplicas` 1. The `enableScalability ? 3 : 1` still visible in the AVM
+output is the **MCP** container app, which is stateless and keeps it
+deliberately.
+
+**The ARM was already stale before this work**, and separating that out
+matters for reading the diff. Rebuilding `origin/main`'s Bicep with the same
+compiler shows:
+
+| File | Pre-existing drift on `origin/main` |
+|---|---|
+| `infra/main.json` | none — byte-identical to a rebuild |
+| `infra/bicep/main.json` | 15 JSON lines behind |
+| `infra/avm/main.json` | 89 JSON lines behind |
+
+That drift is folded into `a003d48` and is real content, not noise:
+`AZURE_OPENAI_IMAGE_QUALITY` and `AZURE_STORAGE_IMAGES_CONTAINER` were missing
+from the backend container environment, a stale `WEBSITES_PORT` was still
+being set, an AVM model description still read `gpt-4o`,
+`virtualMachineAvailabilityZone` differed, and the AVM app-service module had
+moved on (`vnetRouteAllEnabled`, `imagePullTraffic`, a logs config resource).
 
 ---
 
