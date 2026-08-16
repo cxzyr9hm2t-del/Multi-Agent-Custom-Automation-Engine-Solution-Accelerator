@@ -216,6 +216,9 @@ param enableScalability bool = deploymentFlavor == 'avm-waf'
 @description('Optional. Enable redundancy for applicable resources. Defaults to true when deploymentFlavor is avm-waf.')
 param enableRedundancy bool = deploymentFlavor == 'avm-waf'
 
+@description('Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token.')
+param backendAuthClientId string = ''
+
 @secure()
 @description('Optional. The user name for the administrator account of the virtual machine. Applies only to AVM flavors.')
 param vmAdminUsername string?
@@ -242,6 +245,7 @@ var isBicep = deploymentFlavor == 'bicep'
 module avmDeployment './avm/main.bicep' = if (isAvm) {
   name: take('module.avm.${solutionName}', 64)
   params: {
+    backendAuthClientId: backendAuthClientId
     solutionName: solutionName
     solutionUniqueText: solutionUniqueText
     location: location
@@ -298,6 +302,7 @@ module avmDeployment './avm/main.bicep' = if (isAvm) {
 module bicepDeployment './bicep/main.bicep' = if (isBicep) {
   name: take('module.bicep.${solutionName}', 64)
   params: {
+    backendAuthClientId: backendAuthClientId
     solutionName: solutionName
     solutionUniqueText: solutionUniqueText
     location: location

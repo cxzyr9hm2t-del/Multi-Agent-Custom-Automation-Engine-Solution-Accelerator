@@ -164,6 +164,9 @@ param enableMonitoring bool = false
 @description('Optional. Enable scalability for applicable resources, aligned with the Well Architected Framework recommendations. Defaults to false.')
 param enableScalability bool = false
 
+@description('Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token.')
+param backendAuthClientId string = ''
+
 @description('Optional. Enable redundancy for applicable resources, aligned with the Well Architected Framework recommendations. Defaults to false.')
 param enableRedundancy bool = false
 
@@ -1070,6 +1073,7 @@ module containerApp './modules/compute/container-app.bicep' = {
     environmentResourceId: containerAppEnvironment.outputs.resourceId
     ingressExternal: true
     ingressTargetPort: 8000
+    authClientId: backendAuthClientId
     ingressAllowInsecure: false
     enableTelemetry: enableTelemetry
     managedIdentities: {

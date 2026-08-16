@@ -69,6 +69,12 @@ param enableTelemetry bool = true
 @description('Optional. Bool indicating if the Container App should enable session affinity.')
 param stickySessionsAffinity string = 'none'
 
+@description('Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour.')
+param authClientId string = ''
+
+@description('Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant.')
+param authTenantId string = tenant().tenantId
+
 // ============================================================================
 // Container App (AVM)
 // ============================================================================
@@ -94,6 +100,33 @@ module containerApp 'br/public:avm/res/app/container-app:0.22.1' = {
     scaleSettings: scaleSettings
     workloadProfileName: workloadProfileName
     stickySessionsAffinity: stickySessionsAffinity
+    // Only configured when an app registration is supplied; otherwise the app
+    // stays open, which is the pre-existing behaviour. `Return401` rejects
+    // unauthenticated callers rather than issuing a browser login redirect,
+    // which is what an API wants.
+    authConfig: empty(authClientId) ? {} : {
+      platform: {
+        enabled: true
+      }
+      globalValidation: {
+        unauthenticatedClientAction: 'Return401'
+      }
+      identityProviders: {
+        azureActiveDirectory: {
+          enabled: true
+          registration: {
+            openIdIssuer: 'https://login.microsoftonline.com/${authTenantId}/v2.0'
+            clientId: authClientId
+          }
+          validation: {
+            allowedAudiences: [
+              'api://${authClientId}'
+              authClientId
+            ]
+          }
+        }
+      }
+    }
   }
 }
 

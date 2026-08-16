@@ -173,6 +173,9 @@ param isCustom bool = false
 @description('Optional. Resource ID of an existing Azure Container Registry to reuse. If empty, a new container registry is created.')
 param existingContainerRegistryResourceId string = ''
 
+@description('Optional. Entra application (client) ID of the app registration for the backend API. When set, the backend container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Leave empty to keep the backend open — see docs/backend_api_authentication.md before enabling, because the image proxy and the WebSocket cannot carry a bearer token.')
+param backendAuthClientId string = ''
+
 var deployerInfo = deployer()
 var deployingUserPrincipalId = deployerInfo.objectId
 var deployerPrincipalType = contains(deployerInfo, 'userPrincipalName') ? 'User' : 'ServicePrincipal'
@@ -496,6 +499,7 @@ module backend_container_app './modules/compute/container-app.bicep' = {
     environmentResourceId: container_app_environment.outputs.resourceId
     ingressExternal: true
     ingressTargetPort: 8000
+    authClientId: backendAuthClientId
     managedIdentities: {
       userAssignedResourceIds: [userAssignedIdentity.outputs.resourceId]
     }

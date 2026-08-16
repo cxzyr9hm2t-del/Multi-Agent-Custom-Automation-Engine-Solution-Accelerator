@@ -60,6 +60,12 @@ param scaleSettings object = {
 @description('Workload profile name.')
 param workloadProfileName string?
 
+@description('Optional. Entra application (client) ID of the API app registration. When set, the container app is placed behind Container Apps authentication and unauthenticated callers receive a 401. Empty (the default) leaves the app open, which is the pre-existing behaviour.')
+param authClientId string = ''
+
+@description('Optional. Entra tenant ID used to validate tokens. Defaults to the deployment tenant.')
+param authTenantId string = tenant().tenantId
+
 // ============================================================================
 // Resource Deployment
 // ============================================================================
@@ -96,6 +102,43 @@ resource containerApp 'Microsoft.App/containerApps@2024-10-02-preview' = {
         minReplicas: scaleSettings.minReplicas
         maxReplicas: scaleSettings.maxReplicas
         rules: contains(scaleSettings, 'rules') ? scaleSettings.rules : null
+      }
+    }
+  }
+}
+
+// ============================================================================
+// Authentication (Container Apps built-in auth)
+// ============================================================================
+// Created only when an app registration is supplied, so an unconfigured
+// deployment behaves exactly as before. `Return401` is the correct action for
+// an API: it rejects unauthenticated callers outright rather than issuing a
+// browser login redirect. Bearer tokens are validated against the audiences
+// below; no client secret is required because the login/redirect flow is not
+// used.
+resource containerAppAuth 'Microsoft.App/containerApps/authConfigs@2024-10-02-preview' = if (!empty(authClientId)) {
+  name: 'current'
+  parent: containerApp
+  properties: {
+    platform: {
+      enabled: true
+    }
+    globalValidation: {
+      unauthenticatedClientAction: 'Return401'
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          openIdIssuer: 'https://login.microsoftonline.com/${authTenantId}/v2.0'
+          clientId: authClientId
+        }
+        validation: {
+          allowedAudiences: [
+            'api://${authClientId}'
+            authClientId
+          ]
+        }
       }
     }
   }
