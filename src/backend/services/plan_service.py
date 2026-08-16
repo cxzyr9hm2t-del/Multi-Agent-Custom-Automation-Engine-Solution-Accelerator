@@ -138,9 +138,9 @@ class PlanService:
             mplan = orchestration_config.plans[human_feedback.m_plan_id]
             memory_store = await DatabaseFactory.get_database(user_id=user_id)
             if hasattr(mplan, "plan_id"):
-                print(
-                    "Updated orchestration config:",
-                    orchestration_config.plans[human_feedback.m_plan_id],
+                logger.debug(
+                    "Updated orchestration config for m_plan %s",
+                    human_feedback.m_plan_id,
                 )
                 if human_feedback.approved:
                     plan = await memory_store.get_plan(human_feedback.plan_id)
@@ -160,7 +160,10 @@ class PlanService:
                             },
                         )
                     else:
-                        print("Plan not found in memory store.")
+                        logger.warning(
+                            "Plan '%s' not found for user '%s'",
+                            human_feedback.plan_id, user_id,
+                        )
                         return False
                 else:  # reject plan
                     track_event_if_configured(
@@ -174,7 +177,7 @@ class PlanService:
                     await memory_store.delete_plan_by_plan_id(human_feedback.plan_id)
 
         except Exception as e:
-            print(f"Error processing plan approval: {e}")
+            logger.exception("Error processing plan approval: %s", e)
             return False
         return True
 

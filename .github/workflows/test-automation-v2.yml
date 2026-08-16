@@ -1,5 +1,9 @@
 name: Test Automation Macae v4
 
+permissions:
+  contents: read
+  id-token: write
+
 on:
     workflow_call:
         inputs:

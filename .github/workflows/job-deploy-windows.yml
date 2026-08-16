@@ -1,5 +1,9 @@
 name: Deploy Steps - Windows
 
+permissions:
+  contents: read
+  id-token: write
+
 on:
   workflow_call:
     inputs:

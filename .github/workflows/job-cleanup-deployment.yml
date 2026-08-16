@@ -1,5 +1,9 @@
 name: Cleanup Deployment Job
 
+permissions:
+  contents: read
+  id-token: write
+
 on:
   workflow_call:
     inputs:

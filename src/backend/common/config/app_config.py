@@ -216,17 +216,6 @@ class AppConfig:
             return os.environ[name]
         return default
 
-    def _get_bool(self, name: str) -> bool:
-        """Get a boolean configuration value from environment variables.
-
-        Args:
-            name: The name of the environment variable
-
-        Returns:
-            True if the environment variable exists and is set to 'true' or '1', False otherwise
-        """
-        return name in os.environ and os.environ[name].lower() in ["true", "1"]
-
     def get_cosmos_database_client(self):
         """Get a Cosmos DB client for the configured database.
 

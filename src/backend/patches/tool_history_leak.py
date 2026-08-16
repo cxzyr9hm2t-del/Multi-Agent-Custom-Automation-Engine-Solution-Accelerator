@@ -10,7 +10,6 @@ Fix (two layers):
 2. Override AgentExecutor._run_agent_and_emit to filter _cache in-place before
    sending to the model (consumption path — catches any leaks we missed).
 
-Tracking: localspec/bugs/framework/F1-tool-history-leak.md
 Framework: agent-framework-orchestrations==1.0.0b260514
 """
 

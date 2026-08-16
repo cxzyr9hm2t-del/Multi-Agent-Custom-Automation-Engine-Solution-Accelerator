@@ -84,7 +84,10 @@ jobs:
               git checkout "$head_branch"
               git config user.name "github-actions"
               git config user.email "action@github.com"
-              # Attempt rebase with 'theirs' strategy
+              # Attempt rebase preferring the incoming Dependabot change.
+              # NOTE: -X theirs silently discards base-side edits to a
+              # conflicting hunk. That is usually right for a lockfile bump and
+              # wrong for anything else, so the merge below is gated on CI.
               if git rebase --strategy=recursive -X theirs "$base_branch"; then
                 echo "✅ Rebase successful. Pushing..."
                 git push origin "$head_branch" --force
@@ -117,6 +120,23 @@ jobs:
               mergeable=$(gh pr view "$pr_number" --json mergeable --jq '.mergeable' 2>/dev/null || echo "UNKNOWN")
               echo "🔁 Attempt $((attempt+1))/$max_attempts: mergeable=$mergeable"
               if [[ "$mergeable" == "MERGEABLE" ]]; then
+                # Gate on CI. Merging a dependency bump without checking that
+                # the suite still passes is how a broken dependency lands
+                # unattended — which is the whole point of this job being
+                # scheduled and unsupervised.
+                rollup=$(gh pr view "$pr_number" --json statusCheckRollup \
+                  --jq '[.statusCheckRollup[]? | select((.conclusion // .state) != null)
+                         | (.conclusion // .state)]' 2>/dev/null || echo "[]")
+                echo "🔎 Check conclusions: $rollup"
+                if echo "$rollup" | grep -qiE '"(FAILURE|TIMED_OUT|CANCELLED|ACTION_REQUIRED|ERROR)"'; then
+                  echo "❌ CI is not green for PR #$pr_number — refusing to merge."
+                  break
+                fi
+                if [[ "$rollup" == "[]" ]]; then
+                  echo "❌ No completed checks reported for PR #$pr_number — refusing to merge."
+                  break
+                fi
+                echo "✅ CI is green — proceeding to merge."
                 success=0
                 for strategy in rebase squash merge; do
                   echo "🚀 Trying to auto-merge PR #$pr_number using '$strategy' strategy..."

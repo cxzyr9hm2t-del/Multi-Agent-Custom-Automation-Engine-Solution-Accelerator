@@ -219,18 +219,6 @@ class TestAppConfigPrivateMethods:
             result = config._get_optional("NON_EXISTENT_VAR")
             assert result == ""
 
-    @patch.dict(os.environ, {"BOOL_TRUE": "true", "BOOL_FALSE": "false", "BOOL_1": "1", "BOOL_0": "0"})
-    def test_get_bool_method(self):
-        """Test _get_bool method with various boolean values."""
-        with patch.dict(os.environ, self._get_minimal_env()):
-            config = AppConfig()
-            
-            assert config._get_bool("BOOL_TRUE") is True
-            assert config._get_bool("BOOL_1") is True
-            assert config._get_bool("BOOL_FALSE") is False
-            assert config._get_bool("BOOL_0") is False
-            assert config._get_bool("NON_EXISTENT_VAR") is False
-
 
 class TestAppConfigCredentials:
     """Test cases for credential management methods in AppConfig class."""

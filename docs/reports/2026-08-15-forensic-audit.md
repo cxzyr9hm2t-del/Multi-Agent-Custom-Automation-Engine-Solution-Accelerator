@@ -1,5 +1,11 @@
 # Forensic Audit — code, security and history
 
+> **Remediation status (updated 2026-08-16).** Everything below has since been
+> addressed on `claude/claude-rc-t59dbs`. Sixteen of the seventeen findings are
+> fixed; **M7** is partially fixed and **L7** is deliberately not done. See
+> §9 for the disposition of each, and `docs/backend_api_authentication.md` for
+> the authentication work that C1 turned into.
+
 **Date:** 2026-08-15
 **Repository:** `cxzyr9hm2t-del/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator` (fork of `microsoft/…`)
 **Commit audited:** `452ff53` (= `origin/main`, v0.1.0)
@@ -248,3 +254,55 @@ known environment split, not a regression.
    of the accelerator, rather than carried as a permanent private patch set.
 8. **Tighten CI supply chain and clear hygiene debt:** pin actions to SHAs, add `permissions:`
    blocks, gate the Dependabot auto-merge on tests, then the L-series items.
+
+---
+
+## 9. Remediation status
+
+Added 2026-08-16, after the findings above were worked through. "Fixed" means
+the defect is closed and covered by a test; where that is not the whole story
+the note says so.
+
+| # | Status | Note |
+|---|---|---|
+| C1 | **Partially fixed** | An opt-in Container Apps `authConfig` is wired through both flavours behind `backendAuthClientId`, empty by default. `auth_utils` now prefers the platform's `x-ms-client-principal` claims blob over the bare id header. It is not *enabled* by default — that needs an app registration, and enabling it has consequences documented in `docs/backend_api_authentication.md`. |
+| C2 | Fixed | `get_plan_by_plan_id` now constrains `c.user_id`. |
+| C3 | Fixed | Approvals and clarifications record an owner; both endpoints 403 on a mismatch, and an unrecorded owner is a denial. |
+| C4 | Fixed | The WebSocket is authorized before `accept()`, and now takes a signed token bound to the user and the plan. |
+| C5 | Fixed | The MCP server is on internal ingress. |
+| H1 | Fixed | CORS is scoped to `FRONTEND_SITE_NAME`. |
+| H2 | Fixed | RAI validation runs on every upload; the "passed" event no longer fires when nothing was validated. |
+| H3 | **Partially fixed** | The clarification can no longer be *answered* by anyone else (C3), and outside dev it can no longer be misdelivered. `/clarification/ask` is still unauthenticated, so a question can still be pushed into a user's UI. The root cause is that `ask_user` takes its `user_id` from the model; the durable fix is for the backend to supply it from the invoking orchestration. |
+| H4 | Fixed | `delete_plan_by_plan_id` constrains `data_type` and `user_id`. |
+| H5 | Fixed | `/agent_message` authorizes against the plan it targets and requires a `plan_id`. |
+| M1 | Fixed | Updates go through `update_team_configuration`, preserving the stored document's identity and partition key. Default teams are refused with a 403 — an authorization gap the audit missed. |
+| M2 | Fixed | Deliberate status codes re-raise ahead of the catch-all in all four places. |
+| M3 | Fixed | Documented at both ends, and the **AVM** flavour's `maxReplicas: enableScalability ? 3 : 1` was corrected — worse than this report recorded, since it would have run three replicas of a single-replica-only backend. |
+| M4 | Fixed | The RAI agent is built once and reused, discarded on failure; it no longer mutates the caller's config; the verdict must be unambiguous. |
+| M5 | Fixed | Authenticated and keyed per user rather than written to `os.environ`. |
+| M6 | Fixed | Docstrings state where enforcement actually lives. |
+| M7 | **Partially fixed** | Images authenticate with a signed token and are checked against a recorded owner (`common/utils/image_assets.py`). Images generated before the record existed have none and fall back to token-only protection, so existing conversations keep rendering; the handler can require a record once history has turned over. |
+| L1 | Fixed | `print()` replaced with logging, or removed where an adjacent `logger.error` already covered it. |
+| L2 | Fixed | `_get_bool` deleted; `frontend_url` is now used by the CORS fix. |
+| L3 | Fixed | Dangling `localspec/` references removed. |
+| L4 | Fixed | `delete_team_agent` is annotated `-> bool`. |
+| L5 | Fixed | The Dependabot auto-merge now refuses to merge unless CI reports completed, non-failing checks. |
+| L6 | Fixed | All 27 workflows carry a top-level `permissions:` block, following the repository's own `azure-dev.yml` convention. |
+| L7 | **Not done** | Pinning actions to commit SHAs needs each tag resolved to a digest. Guessing them would be worse than leaving them, so this is left for `pinact` or an equivalent tool run with network access. |
+| L8 | Fixed | `WebWarning.svg` was not a vector: it was one 2048×2048 base64 PNG (4.4 MB decoded) wrapped in an SVG and displayed at 128×128. Re-encoded at 384×384 — 6.2 MB → 207 KB, 3.3% of the original. |
+
+### Follow-on work this produced
+
+Closing C1 surfaced three things that were not in the original findings, all now
+done: images and the WebSocket needed a way to authenticate without a header
+(short-lived signed tokens in `common/utils/resource_tokens.py`), and the
+frontend needed to acquire a bearer token for the API audience.
+
+### Still open
+
+- **C1 is not enabled.** The parameter exists; the app registration and the
+  decision to turn it on are yours. Until then every ownership check in the
+  application still compares against a client-supplied identity.
+- **H3's unauthenticated endpoint**, and the design change behind it.
+- **L7**, above.
+- **The v0.1.0 tag** (§6) — still never pushed.

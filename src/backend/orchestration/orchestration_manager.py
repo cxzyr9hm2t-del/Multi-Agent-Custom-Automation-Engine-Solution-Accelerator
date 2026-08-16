@@ -35,7 +35,7 @@ from services.team_service import TeamService
 
 # Apply patch: MAF bug causes tool_call/tool_result messages to leak across
 # participants in GroupChat, triggering "No tool call found for call_id" 400 errors.
-# See localspec/bugs/framework/F1-tool-history-leak.md
+# See the module docstring in patches/tool_history_leak.py for the details.
 apply_tool_history_leak_patch()
 
 _BARE_IMAGE_URL_RE = re.compile(
@@ -292,7 +292,6 @@ class OrchestrationManager:
                 cls.logger.error(
                     "Failed to create agents for user '%s': %s", user_id, e
                 )
-                print(f"Failed to create agents for user '{user_id}': {e}")
                 raise
             try:
                 cls.logger.info("Initializing new orchestration for user '%s'", user_id)
@@ -305,7 +304,6 @@ class OrchestrationManager:
                 cls.logger.error(
                     "Failed to initialize orchestration for user '%s': %s", user_id, e
                 )
-                print(f"Failed to initialize orchestration for user '{user_id}': {e}")
                 raise
 
         elif needs_workflow_reset:
@@ -339,7 +337,6 @@ class OrchestrationManager:
                 cls.logger.error(
                     "Failed to reset orchestration for user '%s': %s", user_id, e
                 )
-                print(f"Failed to reset orchestration for user '{user_id}': {e}")
                 raise
 
         return orchestration_config.get_current_orchestration(user_id)

@@ -542,8 +542,8 @@ class CosmosDBClient(DatabaseBase):
         await self.delete_team_agent(team_agent.team_id, team_agent.agent_name)  # Ensure no duplicates
         await self.add_item(team_agent)
 
-    async def delete_team_agent(self, team_id: str, agent_name: str) -> None:
-        """Delete the current team for a user."""
+    async def delete_team_agent(self, team_id: str, agent_name: str) -> bool:
+        """Delete a team's record of a named agent."""
         query = "SELECT c.id, c.session_id FROM c WHERE c.team_id=@team_id AND c.data_type=@data_type AND c.agent_name=@agent_name"
 
         params = [

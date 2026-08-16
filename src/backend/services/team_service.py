@@ -296,7 +296,9 @@ class TeamService:
         Returns:
             True if successful, False otherwise
         """
-        print("Handling team selection for user:", user_id, "team:", team_id)
+        self.logger.debug(
+            "Handling team selection for user %s, team %s", user_id, team_id
+        )
         try:
             await self.memory_context.delete_current_team(user_id)
             current_team = UserCurrentTeam(
