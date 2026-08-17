@@ -23,7 +23,7 @@ opinion about:
 
 | State | Type | Serialisable? |
 |---|---|---|
-| `orchestrations[user_id]` | live Magentic workflow object | **No** |
+| `orchestrations[user_id]` | live Magentic workflow object | ~~**No**~~ — **see correction below** |
 | `active_tasks[user_id]` | `asyncio.Task` | **No** |
 | `sockets[user_id]` | live `WebSocket` | **No** — inherently per-process |
 | `_approval_events`, `_clarification_events` | `asyncio.Event` | No, but replaceable |
@@ -31,6 +31,22 @@ opinion about:
 | `_approval_owners`, `_clarification_owners` | plain dicts | Yes |
 
 *(`src/backend/orchestration/connection_config.py:40–57`)*
+
+> **CORRECTION (17 Aug 2026, from the C3 spike — task #17).** The first row is wrong, and
+> it was the load-bearing row: "the workflow object is not serialisable" is why this note
+> concluded C3 was the largest track. Measured against the pinned `agent-framework==1.6.0`,
+> the framework serialises it for us. `MagenticBuilder` already accepts
+> `checkpoint_storage` and **we already pass it** — `InMemoryCheckpointStorage`, at
+> `orchestration_manager.py:187`. `CheckpointStorage` is a `Protocol`, and
+> `agent_framework_azure_cosmos.CosmosCheckpointStorage` already implements it against
+> Cosmos and is already installed. The row should read *"not by hand — but the framework
+> checkpoints it."*
+>
+> This does **not** make M3 smaller than stated, for reasons that matter: the Cosmos
+> implementation is beta and reaches us only transitively, no stable `thread_id` is
+> threaded through so nothing could actually resume, and making a checkpoint restorable by
+> any replica creates a workflow-ownership problem that no vendor API solves. See
+> [the spike](2026-08-17-c3-spike-workflow-durability.md) — §4 and §5 are the parts to read.
 
 Adopting MRTR and changing nothing else would leave every row of that table exactly
 as it is. A second replica would still fail the same way: an approval posted to
