@@ -33,16 +33,42 @@ See ``docs/reports/2026-08-17-c3-spike-workflow-durability.md`` §4b.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
-
-from agent_framework import WorkflowCheckpointException
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from agent_framework import WorkflowCheckpoint
 
 logger = logging.getLogger(__name__)
+
+
+def _framework_error_base() -> type[BaseException]:
+    """Subclass the framework's checkpoint error when there is a real one.
+
+    The test conftest fabricates stand-in classes for ``agent_framework`` names
+    when the package is absent, and those stand-ins are not exception types.
+    Raising one would fail with "Expected a BaseException type" rather than
+    behaving like a missing checkpoint, so fall back to ``Exception`` and keep the
+    raise path meaningful in both environments. Where the real class is present,
+    subclassing it means the framework's own ``except`` clauses still match.
+    """
+    try:
+        from agent_framework import WorkflowCheckpointException as _E
+    except Exception:  # pragma: no cover - only when the package is absent
+        return Exception
+    if isinstance(_E, type) and issubclass(_E, BaseException):
+        return _E
+    return Exception
+
+
+class CheckpointNotFoundError(_framework_error_base()):  # type: ignore[misc]
+    """A checkpoint is absent — or present but owned by another scope.
+
+    One type covers both deliberately. See ``ScopedCheckpointStorage.load``.
+    """
+
 
 # Separator between the scope and the framework's own workflow name. "::" is not
 # produced by the framework's default names, so a round trip is unambiguous.
@@ -75,28 +101,41 @@ class ScopedCheckpointStorage:
     def _owned(self, checkpoint: WorkflowCheckpoint) -> bool:
         return str(checkpoint.workflow_name).startswith(self._prefix)
 
+    @staticmethod
+    def _renamed(checkpoint: WorkflowCheckpoint, name: str) -> WorkflowCheckpoint:
+        """Copy with a new ``workflow_name``, never mutating the caller's object.
+
+        The framework keeps using its checkpoint after handing it to ``save``, so
+        renaming in place would corrupt the live workflow. ``WorkflowCheckpoint``
+        is a non-frozen dataclass today; the ``copy`` fallback keeps this correct
+        for any conforming implementation that is not one.
+        """
+        if dataclasses.is_dataclass(checkpoint) and not isinstance(checkpoint, type):
+            return dataclasses.replace(checkpoint, workflow_name=name)
+        duplicate = copy.copy(checkpoint)
+        duplicate.workflow_name = name
+        return duplicate
+
     def _unscope(self, checkpoint: WorkflowCheckpoint) -> WorkflowCheckpoint:
         """Hand back the name the framework wrote, not our storage key."""
         name = str(checkpoint.workflow_name)
         if not name.startswith(self._prefix):
             return checkpoint
-        return dataclasses.replace(
-            checkpoint, workflow_name=name[len(self._prefix):]
-        )
+        return self._renamed(checkpoint, name[len(self._prefix):])
 
     # -------------------------------------------------- CheckpointStorage --
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> str:
         return await self._inner.save(
-            dataclasses.replace(
-                checkpoint, workflow_name=self._scoped(str(checkpoint.workflow_name))
+            self._renamed(
+                checkpoint, self._scoped(str(checkpoint.workflow_name))
             )
         )
 
     async def load(self, checkpoint_id: str) -> WorkflowCheckpoint:
         checkpoint = await self._inner.load(checkpoint_id)
         if checkpoint is None:
-            raise WorkflowCheckpointException(
+            raise CheckpointNotFoundError(
                 f"checkpoint {checkpoint_id!r} not found"
             )
         if not self._owned(checkpoint):
@@ -107,7 +146,7 @@ class ScopedCheckpointStorage:
                 checkpoint_id,
                 self._scope,
             )
-            raise WorkflowCheckpointException(
+            raise CheckpointNotFoundError(
                 f"checkpoint {checkpoint_id!r} not found"
             )
         return self._unscope(checkpoint)
