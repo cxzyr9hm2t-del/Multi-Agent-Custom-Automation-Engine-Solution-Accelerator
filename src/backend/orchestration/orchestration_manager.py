@@ -26,6 +26,7 @@ from common.models.messages import TeamConfiguration
 from common.utils.markdown_utils import \
     normalize_markdown_tables as _normalize_markdown_tables
 from models.messages import AgentMessageStreaming, WebsocketMessageType
+from orchestration import state_store
 from orchestration.connection_config import (connection_config,
                                              orchestration_config)
 from orchestration.plan_review_helpers import (convert_plan_review_to_mplan,
@@ -358,6 +359,12 @@ class OrchestrationManager:
         """
         job_id = str(uuid.uuid4())
         orchestration_config.set_approval_pending(job_id, user_id=user_id)
+        await state_store.state_store.record_pending(
+            state_store.KIND_APPROVAL,
+            job_id,
+            user_id,
+            orchestration_config.default_timeout,
+        )
         self.logger.info(
             "Starting orchestration job '%s' for user '%s'", job_id, user_id
         )

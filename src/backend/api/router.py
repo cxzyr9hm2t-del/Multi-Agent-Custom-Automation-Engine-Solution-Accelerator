@@ -24,6 +24,7 @@ from common.utils.team_utils import (find_first_available_team, rai_success,
                                      rai_validate_team_config)
 from fastapi import (APIRouter, BackgroundTasks, File, HTTPException, Query,
                      Request, UploadFile, WebSocket, WebSocketDisconnect)
+from orchestration import state_store
 from orchestration.connection_config import (connection_config,
                                              orchestration_config, team_config)
 from orchestration.orchestration_manager import OrchestrationManager
@@ -692,6 +693,14 @@ async def plan_approval(
                 orchestration_config.set_approval_result(
                     human_feedback.m_plan_id, human_feedback.approved
                 )
+                # Also record it durably, so the replica actually running the
+                # orchestration sees the decision even if it was not this one.
+                await state_store.state_store.record_result(
+                    state_store.KIND_APPROVAL,
+                    human_feedback.m_plan_id,
+                    user_id,
+                    approved=human_feedback.approved,
+                )
                 logger.debug("Plan approval received: %s", human_feedback)
 
                 try:
@@ -840,6 +849,9 @@ async def clarification_ask(request: Request):
     # user being asked — only they may answer it.
     orchestration_config.set_clarification_pending(
         request_id, user_id=user_id, ttl_seconds=ttl_seconds
+    )
+    await state_store.state_store.record_pending(
+        state_store.KIND_CLARIFICATION, request_id, user_id, ttl_seconds
     )
 
     # Send the question to the user's browser via WebSocket
@@ -1075,6 +1087,12 @@ async def user_clarification(
             # Use the new event-driven method to set clarification result
             orchestration_config.set_clarification_result(
                 human_feedback.request_id, human_feedback.answer
+            )
+            await state_store.state_store.record_result(
+                state_store.KIND_CLARIFICATION,
+                human_feedback.request_id,
+                user_id,
+                answer=human_feedback.answer,
             )
             try:
                 result = await PlanService.handle_human_clarification(

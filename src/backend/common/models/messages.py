@@ -26,6 +26,7 @@ class DataType(str, Enum):
     m_plan = "m_plan"
     m_plan_message = "m_plan_message"
     image_asset = "image_asset"
+    orchestration_request = "orchestration_request"
 
 
 class AgentType(str, Enum):
@@ -97,6 +98,34 @@ class AgentMessage(BaseDataModel):
     content: str
     source: str
     step_id: Optional[str] = None
+
+
+class OrchestrationRequest(BaseDataModel):
+    """A pending human decision — a plan approval or a clarification.
+
+    Externalised so an answer can be recorded by whichever replica happens to
+    receive it, rather than only by the one holding the ``asyncio.Event``. See
+    docs/reports/2026-08-16-mrtr-migration-path.md, Track C1.
+
+    ``session_id`` is set to the request id so the item is a single-partition
+    point read: these are looked up by id constantly while a human decides, and
+    a cross-partition query for each poll would be the expensive way to do it.
+
+    ``expires_at`` is **wall clock**, unlike the in-memory deadline, which is
+    monotonic. Monotonic is the right choice within one process — immune to
+    clock adjustment — but its origin is per-process and means nothing to
+    another replica, which is the entire point of persisting this.
+    """
+
+    data_type: Literal[DataType.orchestration_request] = DataType.orchestration_request
+    request_id: str
+    kind: Literal["approval", "clarification"]
+    user_id: str
+    status: Literal["input_required", "completed"] = "input_required"
+    # Exactly one of these is set once status is "completed".
+    approved: Optional[bool] = None
+    answer: Optional[str] = None
+    expires_at: str = ""
 
 
 class Session(BaseDataModel):

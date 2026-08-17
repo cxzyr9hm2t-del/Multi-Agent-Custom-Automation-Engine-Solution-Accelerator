@@ -1,7 +1,7 @@
 # MRTR migration path — getting off the single-replica constraint
 
 **Date:** 2026-08-16
-**Status:** design note. **Track A is now implemented** (see §3); Tracks B and C are not.
+**Status:** design note. **Tracks A and C1 are implemented** (§3, §5); B, C2 and C3 are not.
 **Related:** `2026-08-15-forensic-audit.md` (M3), `2026-08-16-remediation-record.md` §1.1
 
 ---
@@ -221,16 +221,43 @@ land and be reported as "M3 fixed".**
 
 Neither MRTR nor Tasks touches this. Three options, in increasing order of effort.
 
-### C1. Externalise the serialisable state only
+### C1. Externalise the serialisable state only — IMPLEMENTED
 
-Move `approvals`, `clarifications`, `plans` and both `_owners` dicts to Cosmos
-(already the store for plans, sessions, teams and messages). Replace `asyncio.Event`
-with a poll or a Cosmos change feed.
+Pending approvals and clarifications are written to Cosmos as
+`orchestration_request` documents, and waiters read them.
+
+**Behind `ORCHESTRATION_STATE_STORE`, default `memory`.** With the default there
+is no Cosmos traffic and no behavioural change whatsoever; the waiter awaits its
+`asyncio.Event` exactly as before. Set it to `cosmos` to turn the store on.
+Defaulting off is deliberate — this is the approval gate, where a mistake hangs a
+plan or releases someone else's.
+
+How the cross-replica case works: the `asyncio.Event` only fires in the process
+that recorded the answer, so when the store is on the waiter *races* the event
+against a periodic read (`STORE_POLL_INTERVAL_SECONDS`, 2 s). The local event
+still wins instantly when the answer lands on the same replica.
+
+Details worth knowing before extending it:
+
+- **`expires_at` is wall clock**, unlike the in-memory deadline, which is
+  monotonic. Monotonic is correct within one process and meaningless to another,
+  which is the entire point of persisting it.
+- **The document id is namespaced by kind** (`approval:` / `clarification:`).
+  Approvals are keyed by plan id and clarifications by request id; nothing
+  guarantees those spaces never collide, and a collision would let one release
+  the other.
+- **`session_id` is set to the request id**, making every lookup a
+  single-partition point read rather than a cross-partition query per poll.
+- **Every operation fails soft.** A Cosmos outage degrades to the previous
+  in-memory behaviour rather than propagating; four tests assert this.
+- **`plans` was not moved.** It holds `MPlan` objects used for far more than the
+  decision gate, and moving it is a larger change with no bearing on whether an
+  answer crosses replicas.
 
 - **Unblocks:** approval and clarification answers arriving on any replica.
 - **Does not unblock:** the orchestration object and the socket registry. Still one
   replica.
-- **Verdict:** necessary, not sufficient. Cheap. Do it first.
+- **Verdict:** necessary, not sufficient.
 
 ### C2. Add a socket backplane
 

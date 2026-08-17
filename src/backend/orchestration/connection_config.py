@@ -13,12 +13,17 @@ import logging
 from typing import Any, Dict, Optional
 
 from common.config.app_config import config
+from orchestration import state_store
 from common.models.messages import TeamConfiguration
 from fastapi import WebSocket
 from models.messages import WebsocketMessageType
 from models.plan_models import MPlan
 
 logger = logging.getLogger(__name__)
+
+# How often a waiter re-reads the durable store while waiting. Only used when
+# ORCHESTRATION_STATE_STORE is enabled; the local event still wins instantly.
+STORE_POLL_INTERVAL_SECONDS = 2.0
 
 
 class OrchestrationConfig:
@@ -61,6 +66,71 @@ class OrchestrationConfig:
         # awaited event. Nothing is awaiting them, so nothing would otherwise
         # expire them. Monotonic clock — see set_clarification_pending.
         self._clarification_deadlines: Dict[str, float] = {}
+
+    # ------------------------------------------------------------------ #
+    # Waiting for a decision
+    # ------------------------------------------------------------------ #
+
+    async def _await_decision(self, event: asyncio.Event, timeout: float, poll) -> None:
+        """Wait for a decision, from this process or from another replica.
+
+        The ``asyncio.Event`` only fires in the process that recorded the
+        answer. When the durable store is enabled an answer may instead be
+        recorded by a different replica, which this process learns about only by
+        asking. So the event is raced against a periodic read of the store.
+
+        With the store off — the default — this waits on the event alone and
+        behaves exactly as it did before.
+
+        Raises:
+            asyncio.TimeoutError: if no decision arrives within ``timeout``.
+        """
+        if not state_store.is_enabled():
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            return
+
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+
+            try:
+                # Wake on whichever comes first: the local event, or the next
+                # poll of the store.
+                await asyncio.wait_for(
+                    event.wait(), timeout=min(STORE_POLL_INTERVAL_SECONDS, remaining)
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            if await poll():
+                return
+
+    async def _approval_from_store(self, plan_id: str) -> bool:
+        """Adopt an approval recorded elsewhere. True when one was found."""
+        owner = self._approval_owners.get(plan_id, "")
+        record = await state_store.state_store.read(
+            state_store.KIND_APPROVAL, plan_id, owner
+        )
+        if record is None or record.status != "completed" or record.approved is None:
+            return False
+
+        self.approvals[plan_id] = record.approved
+        return True
+
+    async def _clarification_from_store(self, request_id: str) -> bool:
+        """Adopt an answer recorded elsewhere. True when one was found."""
+        owner = self._clarification_owners.get(request_id, "")
+        record = await state_store.state_store.read(
+            state_store.KIND_CLARIFICATION, request_id, owner
+        )
+        if record is None or record.status != "completed" or record.answer is None:
+            return False
+
+        self.clarifications[request_id] = record.answer
+        return True
 
     def get_current_orchestration(self, user_id: str) -> Any:
         """Get existing orchestration workflow instance for user_id."""
@@ -112,7 +182,11 @@ class OrchestrationConfig:
             self._approval_events[plan_id] = asyncio.Event()
 
         try:
-            await asyncio.wait_for(self._approval_events[plan_id].wait(), timeout=timeout)
+            await self._await_decision(
+                self._approval_events[plan_id],
+                timeout=timeout,
+                poll=lambda: self._approval_from_store(plan_id),
+            )
             logger.info("Approval received: %s", plan_id)
             return self.approvals[plan_id]
         except asyncio.TimeoutError:
@@ -229,7 +303,11 @@ class OrchestrationConfig:
             self._clarification_events[request_id] = asyncio.Event()
 
         try:
-            await asyncio.wait_for(self._clarification_events[request_id].wait(), timeout=timeout)
+            await self._await_decision(
+                self._clarification_events[request_id],
+                timeout=timeout,
+                poll=lambda: self._clarification_from_store(request_id),
+            )
             return self.clarifications[request_id]
         except asyncio.TimeoutError:
             self.cleanup_clarification(request_id)

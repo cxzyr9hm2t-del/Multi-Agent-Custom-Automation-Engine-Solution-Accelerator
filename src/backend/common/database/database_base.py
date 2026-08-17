@@ -262,3 +262,32 @@ class DatabaseBase(ABC):
     ) -> Optional[CurrentTeamAgent]:
         """Retrieve a team agent by team_id and agent_name."""
         pass
+
+    # ------------------------------------------------------------------ #
+    # Pending human decisions (approvals / clarifications)
+    #
+    # Concrete rather than abstract on purpose: this is an optional capability
+    # behind ORCHESTRATION_STATE_STORE, and making it abstract would force every
+    # DatabaseBase implementation — including the stubs in the test suite — to
+    # grow three methods they will never call.
+    # ------------------------------------------------------------------ #
+
+    async def upsert_orchestration_request(self, request) -> None:
+        """Create or replace a pending-decision record."""
+        raise NotImplementedError(
+            "This database does not support the orchestration state store."
+        )
+
+    async def get_orchestration_request(self, document_id: str):
+        """Return a pending-decision record by document id, or None."""
+        raise NotImplementedError(
+            "This database does not support the orchestration state store."
+        )
+
+    async def delete_orchestration_request(
+        self, document_id: str, partition_key: str
+    ) -> None:
+        """Remove a pending-decision record."""
+        raise NotImplementedError(
+            "This database does not support the orchestration state store."
+        )

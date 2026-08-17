@@ -52,6 +52,123 @@ orchestration_config = _cc.orchestration_config
 team_config = _cc.team_config
 
 
+class TestAwaitDecisionAcrossReplicas:
+    """The reason Track C1 exists.
+
+    An asyncio.Event only fires in the process that set it. With the durable
+    store on, the answer may be recorded by a different replica, and the waiter
+    learns of it only by asking. With the store off, behaviour is unchanged.
+    """
+
+    @pytest.mark.asyncio
+    async def test_with_the_store_off_it_waits_on_the_event_alone(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+
+        polled = []
+
+        async def _never():
+            polled.append(1)
+            return False
+
+        with patch.object(_cc.state_store, "is_enabled", return_value=False):
+            event = cfg._approval_events["p1"]
+            event.set()
+            await cfg._await_decision(event, timeout=1, poll=_never)
+
+        # Not consulted at all — no Cosmos traffic in the default configuration.
+        assert polled == []
+
+    @pytest.mark.asyncio
+    async def test_the_local_event_still_wins_immediately(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+
+        async def _never():
+            return False
+
+        with patch.object(_cc.state_store, "is_enabled", return_value=True):
+            event = cfg._approval_events["p1"]
+            event.set()
+            await cfg._await_decision(event, timeout=1, poll=_never)
+
+    @pytest.mark.asyncio
+    async def test_an_answer_from_another_replica_is_adopted(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+
+        async def _found_on_second_look():
+            return True
+
+        with patch.object(_cc.state_store, "is_enabled", return_value=True), \
+                patch.object(_cc, "STORE_POLL_INTERVAL_SECONDS", 0.01):
+            # The event is never set — as it would not be, on this replica.
+            await cfg._await_decision(
+                cfg._approval_events["p1"], timeout=1, poll=_found_on_second_look
+            )
+
+    @pytest.mark.asyncio
+    async def test_it_still_times_out_when_no_answer_ever_arrives(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+
+        async def _never():
+            return False
+
+        with patch.object(_cc.state_store, "is_enabled", return_value=True), \
+                patch.object(_cc, "STORE_POLL_INTERVAL_SECONDS", 0.01):
+            with pytest.raises(asyncio.TimeoutError):
+                await cfg._await_decision(
+                    cfg._approval_events["p1"], timeout=0.05, poll=_never
+                )
+
+    @pytest.mark.asyncio
+    async def test_a_stored_approval_is_copied_into_memory(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+        record = MagicMock(status="completed", approved=True)
+
+        with patch.object(
+            _cc.state_store.state_store, "read", AsyncMock(return_value=record)
+        ):
+            assert await cfg._approval_from_store("p1") is True
+        assert cfg.approvals["p1"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_still_pending_stored_record_is_not_adopted(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+        record = MagicMock(status="input_required", approved=None)
+
+        with patch.object(
+            _cc.state_store.state_store, "read", AsyncMock(return_value=record)
+        ):
+            assert await cfg._approval_from_store("p1") is False
+        assert cfg.approvals["p1"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_stored_clarification_is_copied_into_memory(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        record = MagicMock(status="completed", answer="Tuesday")
+
+        with patch.object(
+            _cc.state_store.state_store, "read", AsyncMock(return_value=record)
+        ):
+            assert await cfg._clarification_from_store("r1") is True
+        assert cfg.clarifications["r1"] == "Tuesday"
+
+    @pytest.mark.asyncio
+    async def test_the_owner_is_passed_through_so_the_read_is_scoped(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="owner-1")
+        read = AsyncMock(return_value=None)
+
+        with patch.object(_cc.state_store.state_store, "read", read):
+            await cfg._approval_from_store("p1")
+        assert read.call_args.args[2] == "owner-1"
+
+
 class TestPollClarification:
     """The non-blocking counterpart to wait_for_clarification.
 

@@ -1,6 +1,7 @@
 """CosmosDB implementation of the database interface."""
 
 import datetime
+import json
 import logging
 from typing import Any, Dict, List, Optional, Type
 
@@ -15,6 +16,7 @@ from ..models.messages import (
     CurrentTeamAgent,
     DataType,
     ImageAsset,
+    OrchestrationRequest,
     Plan,
     Step,
     TeamConfiguration,
@@ -517,6 +519,41 @@ class CosmosDBClient(DatabaseBase):
         ]
 
         return await self.query_items(query, parameters, AgentMessageData)
+
+    async def upsert_orchestration_request(
+        self, request: OrchestrationRequest
+    ) -> None:
+        """Create or replace a pending-decision record.
+
+        Upsert rather than add: registration can legitimately re-run for the
+        same id (a retried request, a re-asked clarification), and an insert
+        would then fail where replacing is the intended behaviour.
+        """
+        await self.container.upsert_item(json.loads(request.model_dump_json()))
+
+    async def get_orchestration_request(
+        self, document_id: str
+    ) -> Optional[OrchestrationRequest]:
+        """Read a pending-decision record by document id.
+
+        A point read on (id, partition key) rather than a query — the id encodes
+        the partition, and this is called on every poll while a human decides.
+        """
+        try:
+            partition_key = document_id.split(":", 1)[1]
+        except IndexError:
+            logging.warning("Malformed orchestration request id: %s", document_id)
+            return None
+
+        return await self.get_item_by_id(
+            document_id, partition_key, OrchestrationRequest
+        )
+
+    async def delete_orchestration_request(
+        self, document_id: str, partition_key: str
+    ) -> None:
+        """Remove a pending-decision record."""
+        await self.delete_item(document_id, partition_key)
 
     async def add_image_asset(self, image_asset: ImageAsset) -> None:
         """Record ownership of a generated image."""
