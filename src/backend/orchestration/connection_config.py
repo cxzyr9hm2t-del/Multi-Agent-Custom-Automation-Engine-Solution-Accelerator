@@ -39,13 +39,30 @@ class OrchestrationConfig:
     approvals and WebSocket delivery. Lifting the constraint means moving
     approval and clarification state to Cosmos or Redis and putting a backplane
     behind the socket registry.
+
+    WHICH CONTAINER HOLDS THE SOCKETS. Not this class. The live registry is
+    ``WebSocketConnectionManager.connections`` / ``.user_to_process`` below,
+    which does have a removal path (``remove_connection``). A ``self.sockets``
+    dict was declared here and never read or written anywhere in ``src/backend``
+    — it was removed rather than left to mislead, because the surrounding
+    documentation had come to cite it as one of the three things pinning the
+    replicas. The constraint is real; that field was not the reason for it.
+
+    UNBOUNDED CONTAINERS — measured, not assumed. ``orchestrations`` (written at
+    orchestration_manager.py:308 and :340), ``plans`` (plan_service.py:147,
+    orchestration_manager.py:803 and :880) and ``_teams`` have NO delete, pop or
+    clear anywhere in ``src/backend``. Every entry is keyed by ``user_id`` or
+    ``plan_id`` and survives for the life of the process, which at a single
+    pinned replica means until restart. ``active_tasks`` is the counter-example
+    and is cleaned up correctly (router.py:550 and :563). Adding eviction needs
+    a lifecycle decision — when is a plan finished, and may its orchestration be
+    dropped — so it is recorded here rather than guessed at.
     """
 
     def __init__(self):
         self.orchestrations: Dict[str, Any] = {}       # user_id -> workflow instance
         self.plans: Dict[str, MPlan] = {}              # plan_id -> plan details
         self.approvals: Dict[str, bool] = {}           # plan_id -> approval status (None = pending)
-        self.sockets: Dict[str, WebSocket] = {}        # user_id -> WebSocket
         self.clarifications: Dict[str, str] = {}       # plan_id -> clarification response
         self.max_rounds: int = 30
         self.active_tasks: Dict[str, asyncio.Task] = {}  # user_id -> running asyncio.Task
