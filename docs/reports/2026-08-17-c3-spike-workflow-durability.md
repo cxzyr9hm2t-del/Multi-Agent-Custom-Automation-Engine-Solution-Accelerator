@@ -90,11 +90,55 @@ Depending on a beta API is a decision; depending on one *transitively*, where an
 change to the `all` extra could remove it silently, is not a decision — it is an accident
 waiting to happen. If adopted it must be pinned explicitly.
 
-**b. There is no `thread_id` in `orchestration_manager.py`.** The docstring is explicit:
-*"Thread ID must be consistent across runs to resume properly."* Swapping storage without
-threading a stable id (`plan_id` is the natural candidate) through `workflow.run(...)`
-buys durable writes that can never be resumed. **This, not the storage swap, is the
-actual work.**
+**b. Checkpoints cannot be scoped to a plan, and this is the real blocker.**
+
+An earlier revision of this report said the work was to "thread a stable `thread_id`
+through `workflow.run(...)`", on the strength of the `with_checkpointing` docstring:
+
+> Thread ID must be consistent across runs to resume properly.
+> `async for msg in workflow.run("task", thread_id=thread_id, stream=True):`
+
+**That docstring is wrong about its own API.** `Workflow.run()` accepts no `thread_id`:
+
+```
+run(self, message=None, *, stream=False, responses=None, checkpoint_id=None,
+    checkpoint_storage=None, include_status_events=False,
+    function_invocation_kwargs=None, client_kwargs=None)
+```
+
+Resume is by `checkpoint_id`, found via `get_latest(*, workflow_name)`. So
+**`workflow_name` is the partition key for every checkpoint** — and it cannot be set:
+
+- `MagenticBuilder.__init__` exposes **no** name parameter (21 params, none of them a name).
+- `MagenticBuilder.build()` takes no arguments.
+- `Workflow.__init__` *requires* `name`, so `MagenticBuilder` passes a fixed one.
+- Mutating `workflow.name` after `build()` **does not propagate**. `Workflow.__init__`
+  constructs its `Runner` with `self.name` (`_workflow.py:350–355`) and the runner copies
+  the string (`_runner.py:59`). Measured, not reasoned:
+
+  ```
+  name after build:    ORIGINAL
+  name after mutation: MUTATED-plan-123
+  checkpoints under MUTATED-plan-123: 0
+  checkpoints under ORIGINAL:         1
+  VERDICT: mutation does NOT propagate — the runner captured the name at build time
+  ```
+
+**Why this is a security finding rather than a reliability one.** Every Magentic workflow
+built through `MagenticBuilder` therefore shares one `workflow_name`. Today that is
+harmless: `orchestration_manager.py:187` constructs a *fresh* `InMemoryCheckpointStorage`
+per build, so checkpoints are isolated by process and by object. **Swap in a shared Cosmos
+store and that isolation vanishes** — every plan from every user writes under the same
+`workflow_name`, and `get_latest(workflow_name=...)` returns whoever checkpointed most
+recently. Restoring another user's workflow is strictly worse than the approval-ownership
+hole already fixed in `connection_config.py`, and it is the same class of bug: an
+identifier assumed to be scoped that is not.
+
+**The fix does not need an upstream change.** `CheckpointStorage` is a Protocol we
+implement, so the plan id belongs in the *storage*, not the workflow name — a wrapper that
+rewrites `workflow_name` on `save`/`load`/`get_latest`/`list_*`, or a Cosmos partition key
+per plan. Since the storage is already constructed per workflow build, that is the natural
+seam. Worth also asking upstream for a `name` on `MagenticBuilder`, but nothing waits on it.
 
 **c. Two rows of the state table are untouched.** `sockets[user_id]` is inherently
 per-process — that is still C2, a socket backplane. `active_tasks[user_id]` is an
@@ -114,9 +158,12 @@ original framing.
 Foundry Hosted Agents is no longer the cheapest path and the spike does not recommend it.
 Sequence instead:
 
-1. **Thread a stable `thread_id`** (`plan_id`) through the workflow run. No new
-   dependency, testable on one replica, and useless work is impossible — resume needs it
-   under every option.
+1. **Scope checkpoints to a plan in the storage layer**, since `workflow_name` cannot be
+   set (§4b). A `CheckpointStorage` wrapper closing over `plan_id` and rewriting
+   `workflow_name` on `save` / `load` / `get_latest` / `list_*`, or a Cosmos partition key
+   per plan. No new dependency, no upstream change, testable on one replica. **This must
+   land before any shared store is switched on, not after** — a shared store without it is
+   a cross-tenant read.
 2. **Declare `agent-framework-azure-cosmos` explicitly**, pinned, with a comment
    recording that it is beta and why we accepted that.
 3. **Swap `InMemoryCheckpointStorage` → `CosmosCheckpointStorage`** behind the same kind
