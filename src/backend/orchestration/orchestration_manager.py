@@ -32,6 +32,7 @@ from orchestration.connection_config import (connection_config,
 from orchestration.plan_review_helpers import (convert_plan_review_to_mplan,
                                                get_magentic_prompt_kwargs,
                                                wait_for_plan_approval)
+from orchestration.scoped_checkpoint_storage import ScopedCheckpointStorage
 from patches.tool_history_leak import apply_tool_history_leak_patch
 from services.team_service import TeamService
 
@@ -184,7 +185,14 @@ class OrchestrationManager:
         #   intermediate_outputs=True → streams AgentResponseUpdate per token
         #   Both request_info event types (plan review + function_approval_request)
         #   pause the workflow in IDLE_WITH_PENDING_REQUESTS until responses are provided.
-        storage = InMemoryCheckpointStorage()
+        # Scoped by owner even though the in-memory store is per-workflow and so
+        # already isolated. WorkflowCheckpoint.workflow_name is the partition key
+        # for every checkpoint and MagenticBuilder gives no way to set it, so every
+        # Magentic workflow shares one name. That only bites when the backing store
+        # is shared — which is exactly what moving checkpoints to Cosmos does. Put
+        # the seam in now so that swap inherits isolation instead of needing to
+        # remember it. See docs/reports/2026-08-17-c3-spike-workflow-durability.md.
+        storage = ScopedCheckpointStorage(InMemoryCheckpointStorage(), scope=user_id)
         workflow = MagenticBuilder(
             participants=participant_list,
             manager_agent=manager_agent,
