@@ -221,6 +221,28 @@ async def test_delete_of_missing_id_is_false_not_an_error(alice):
 
 
 @pytest.mark.asyncio
+async def test_a_store_that_returns_none_is_treated_as_not_found():
+    """Some stores signal absence by returning None rather than raising.
+
+    FakeStore and InMemoryCheckpointStorage both raise, so this branch is
+    otherwise untested — and CosmosCheckpointStorage, the store this work is
+    heading toward, is precisely the kind that can return None. An unhandled
+    None here would surface as an AttributeError deep in the ownership check
+    instead of a missing checkpoint.
+    """
+
+    class NoneReturningStore:
+        async def load(self, checkpoint_id: str) -> None:
+            return None
+
+    scoped = ScopedCheckpointStorage(NoneReturningStore(), scope="dave")
+    with pytest.raises(CheckpointNotFoundError):
+        await scoped.load("anything")
+    # delete must report False rather than raise, matching the missing-id path.
+    assert await scoped.delete("anything") is False
+
+
+@pytest.mark.asyncio
 async def test_works_when_the_checkpoint_is_not_a_dataclass(shared):
     """The rename must not assume a dataclass.
 

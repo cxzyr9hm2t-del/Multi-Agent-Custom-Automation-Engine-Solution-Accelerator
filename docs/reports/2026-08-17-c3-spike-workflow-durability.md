@@ -158,12 +158,14 @@ original framing.
 Foundry Hosted Agents is no longer the cheapest path and the spike does not recommend it.
 Sequence instead:
 
-1. **Scope checkpoints to a plan in the storage layer**, since `workflow_name` cannot be
-   set (§4b). A `CheckpointStorage` wrapper closing over `plan_id` and rewriting
-   `workflow_name` on `save` / `load` / `get_latest` / `list_*`, or a Cosmos partition key
-   per plan. No new dependency, no upstream change, testable on one replica. **This must
-   land before any shared store is switched on, not after** — a shared store without it is
-   a cross-tenant read.
+1. ~~**Scope checkpoints in the storage layer**, since `workflow_name` cannot be set
+   (§4b).~~ **DONE** — `orchestration/scoped_checkpoint_storage.py`, wired at
+   `orchestration_manager.py:187`. Scoped by `user_id` rather than `plan_id`: no plan
+   exists when the workflow is built, and `orchestrations` is keyed by user anyway, so
+   `user_id` is both available and the boundary that matters. Wrapping the per-workflow
+   in-memory store changes no behaviour today, which is the point — **it had to land
+   before any shared store, not after**, or the first Cosmos deployment is a cross-tenant
+   read.
 2. **Declare `agent-framework-azure-cosmos` explicitly**, pinned, with a comment
    recording that it is beta and why we accepted that.
 3. **Swap `InMemoryCheckpointStorage` → `CosmosCheckpointStorage`** behind the same kind
@@ -171,7 +173,14 @@ Sequence instead:
 4. **Solve ownership** before the pin comes off. This is the piece with no vendor answer.
 5. **Then the two-replica test** (task #14) — still the only proof, and still the gate.
 
-Steps 1 and 2 are worth doing regardless of how step 4 is answered.
+Step 2 is worth doing regardless of how step 4 is answered — but **with** step 3, not
+before it. Pinning a beta distribution the codebase does not yet import buys nothing and
+commits us to it early; it belongs in the change that starts using it.
+
+**Step 4 is the real remaining work, and it is larger than this report first implied.**
+Nothing in the `CheckpointStorage` protocol prevents two replicas restoring and running
+the same workflow. Scoping fixes *whose* checkpoint is read; it says nothing about *how
+many* readers act on it. That question has no vendor answer and it gates removing the pin.
 
 ---
 
