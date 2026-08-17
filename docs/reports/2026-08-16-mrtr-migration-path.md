@@ -298,6 +298,13 @@ checkpointing for a Magentic workflow is a large surface to own.
   Two simultaneous auth changes make a failure impossible to attribute.
 - **Do not treat Track A as closing M3.** It closes a reliability problem, not the
   scaling one.
+- **Do not confuse the two container apps.** The backend and the MCP server have
+  separate `scaleSettings` in `infra/avm/main.bicep`. Only the backend carries the M3
+  constraint. Raising or auditing the MCP server's `maxReplicas` does nothing for M3 —
+  see the correction in §7.
+- **Do not assume C1 is active in a deployment.** `ORCHESTRATION_STATE_STORE` defaults
+  to `"memory"` (`common/config/app_config.py`). The durable path is opt-in, so the
+  Cosmos code can be present, tested and entirely unused.
 
 ---
 
@@ -309,7 +316,27 @@ Each track needs a different proof, and the last one is the one usually skipped.
 |---|---|
 | A | Clarification survives longer than the ingress idle timeout — the failure it exists to fix. Assert no HTTP request is held open. |
 | B | Protocol version negotiated is `2026-07-28`; a legacy client still works against the v2 server. |
-| C | **Run two replicas.** Post an approval to replica A for an orchestration on replica B and watch the plan proceed. Nothing short of this proves it, and it is exactly the test nobody ran before the AVM flavour shipped `maxReplicas: enableScalability ? 3 : 1`. |
+| C | **Run two replicas.** Post an approval to replica A for an orchestration on replica B and watch the plan proceed. Nothing short of this proves it, and no such test exists today — the four `replica` matches under `src/tests/` are unit tests in `test_connection_config.py` and `test_state_store.py`, none of which starts a second process. |
+
+Note this test is the acceptance criterion for **C3**, not C1. C1 makes approvals and
+clarifications visible across replicas; `orchestrations`, `sockets` and `active_tasks`
+remain per-process, so the test cannot pass on C1 alone.
+
+**An earlier draft of this section said the test was "the one nobody ran before the AVM
+flavour shipped `maxReplicas: enableScalability ? 3 : 1`." That was wrong, and the error
+mattered enough to correct rather than quietly drop:**
+
+- The **backend** is hard-pinned to `minReplicas: 1 / maxReplicas: 1` at
+  `infra/avm/main.bicep:1112`, *regardless of* `enableScalability`, with a comment
+  explaining the in-memory state that forbids raising it.
+- The `maxReplicas: enableScalability ? 3 : 1` at `infra/avm/main.bicep:1287` belongs to
+  the **MCP server** (container `name: 'mcp'`), not the backend.
+
+So the scaling expression was never applied to the stateful component. And after Track A
+the MCP server is genuinely safe at three replicas: `ask_user_service.py` holds no task
+registry — it POSTs to create, then polls the *backend* for status, so every piece of
+clarification state lives backend-side. `stickySessionsAffinity` is additionally set to
+`sticky` when `enableScalability` is on.
 
 ---
 
