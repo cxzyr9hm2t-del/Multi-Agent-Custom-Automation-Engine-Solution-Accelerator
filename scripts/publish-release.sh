@@ -107,9 +107,22 @@ else
     echo "✓ pushed tag $VERSION to origin"
 fi
 
-# 2. Release.
+# 2. Release. The tag is immutable once published, but the notes are metadata:
+#    when the changelog says something the published release does not, the
+#    changelog is the source of truth and the release is brought up to date.
+#    This is what keeps a correction to a shipped version's entry from having
+#    to be applied to GitHub by hand.
 if gh release view "$VERSION" >/dev/null 2>&1; then
-    echo "✓ release $VERSION already exists — leaving it untouched"
+    published_notes="$(gh release view "$VERSION" --json body --jq .body)"
+    if [[ "$published_notes" == "$NOTES" ]]; then
+        echo "✓ release $VERSION already published, notes match CHANGELOG.md"
+    elif [[ -n "$DRY_RUN" ]]; then
+        printf 'DRY_RUN: gh release edit %s --notes <%s lines>  (notes differ)\n' \
+            "$VERSION" "$(printf '%s\n' "$NOTES" | wc -l)"
+    else
+        gh release edit "$VERSION" --notes "$NOTES"
+        echo "✓ release $VERSION already published — notes re-synced from CHANGELOG.md"
+    fi
     gh release view "$VERSION" --json url --jq .url
 else
     if [[ -n "$DRY_RUN" ]]; then

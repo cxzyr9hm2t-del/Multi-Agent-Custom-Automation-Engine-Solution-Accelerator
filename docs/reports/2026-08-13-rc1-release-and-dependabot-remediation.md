@@ -1,5 +1,17 @@
 # Release Report — v0.1.0-rc.1 and Dependabot Remediation
 
+> **Status update (2026-08-26).** The follow-ups in §5 are closed. `0.1.0-rc.1`
+> was promoted to `0.1.0`, and **[v0.1.0](https://github.com/cxzyr9hm2t-del/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator/releases/tag/v0.1.0)
+> is published**, tagged at `5f661fa`. Tagging is no longer manual: releases are
+> published by `.github/workflows/publish-release.yml`.
+>
+> Two corrections to what §5 says. The tag push was blocked by GitHub's own
+> ref-level permission, not the egress proxy — the proxy recorded no failure.
+> And `0.1.0-rc.1` was never published as a release of its own: it was
+> superseded by `0.1.0` the same day. Note also that `5f661fa` carries the
+> forensic-audit remediation that landed after the version bump, so it ships in
+> `v0.1.0`; the `[0.1.0]` changelog entry records this.
+
 **Date:** 2026-08-13
 **Repository:** `cxzyr9hm2t-del/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator` (fork of `microsoft/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator`)
 **Scope:** first release candidate of this fork, plus triage and remediation of the three Dependabot alerts open against it.
