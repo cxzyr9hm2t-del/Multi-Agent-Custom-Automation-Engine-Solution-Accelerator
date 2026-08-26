@@ -5,10 +5,13 @@ name: Publish Release
 # section. The work lives in scripts/publish-release.sh, so a release published
 # here and one published from a maintainer's machine follow the same code path.
 #
-# It runs automatically on every push to main and is a no-op unless a release
-# is actually due, so bumping the version and updating the changelog is all it
-# takes to cut a release. It can also be run by hand from the Actions tab for a
-# specific version or commit.
+# It runs automatically on every push to main and holds one invariant: the
+# version on main has a published release whose notes match its CHANGELOG.md
+# entry. So bumping the version and updating the changelog is all it takes to
+# cut a release, and correcting a shipped version's entry re-syncs the
+# published notes on the next push. It never moves a tag that already exists.
+# It can also be run by hand from the Actions tab for a specific version or
+# commit.
 
 on:
   push:
@@ -46,7 +49,6 @@ jobs:
       - name: Decide whether a release is due
         id: decide
         env:
-          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
@@ -80,13 +82,11 @@ jobs:
             exit 0
           fi
 
-          if gh release view "v$VERSION" >/dev/null 2>&1; then
-            echo "Release v$VERSION already published — nothing to do."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "Release v$VERSION is due."
+          # An already-published version is not skipped here: the script is
+          # idempotent, and letting it run is what re-syncs the published notes
+          # when the changelog entry for a shipped version is corrected. It
+          # leaves the tag alone either way.
+          echo "Ensuring release v$VERSION is published and its notes current."
           echo "version=v$VERSION" >> "$GITHUB_OUTPUT"
           echo "publish=true" >> "$GITHUB_OUTPUT"
 

@@ -6,13 +6,30 @@ solution accelerator are documented here. The format is based on
 [Semantic Versioning](https://semver.org/) (`X.Y.Z-rc.N` pre-releases map to
 PEP 440 `X.Y.ZrcN` in the Python manifests).
 
-## [Unreleased]
+## [0.1.0] - 2026-08-13
 
-Security remediation of the forensic audit in
-`docs/reports/2026-08-15-forensic-audit.md`. Sixteen of its seventeen findings
-are closed; §9 of that report carries the disposition of each.
+First stable release of this fork, promoting `0.1.0-rc.1`. It is published from
+commit `5f661fa`, which also carries the security remediation of the forensic
+audit in `docs/reports/2026-08-15-forensic-audit.md`: that work landed after the
+version bump but before the release was tagged, so it ships in this release
+rather than a later one. Sixteen of the audit's seventeen findings are closed;
+§9 of that report carries the disposition of each. All service versions
+(backend, MCP server, frontend app and package) are set to `0.1.0`.
 
 ### Security
+
+- Remediated the three Dependabot alerts open against `v0.1.0-rc.1`:
+  - `mcp` 1.27.2 → 1.28.1 in the MCP server (CVE-2026-59950, WebSocket
+    transport missing Host/Origin validation), now pinned to match the
+    backend; `pydantic` moved 2.11.7 → 2.13.4 alongside it, aligning all
+    three services.
+  - `h2` 4.3.0 → 4.4.1 in the backend (CVE-2026-71554, request smuggling
+    via duplicate Host headers), held as a transitive security pin.
+  - `mem0ai` 1.0.11 → 2.0.18 in the backend (CVE-2026-7597, improper input
+    validation) via a uv dependency override — every `agent-framework-mem0`
+    release compatible with the pinned `agent-framework==1.6.0` caps
+    `mem0ai<2`, the backend does not use the mem0 integration, and the fix
+    only exists in 2.x.
 
 - **The backend can now be put behind an authenticating front door.** A new
   `backendAuthClientId` parameter attaches a Container Apps auth configuration
@@ -62,27 +79,6 @@ are closed; §9 of that report carries the disposition of each.
 - `WebWarning.svg` was a 2048×2048 base64 PNG wrapped in an SVG and displayed at
   128×128; re-encoded at 384×384, 6.2 MB → 207 KB.
 
-## [0.1.0] - 2026-08-13
-
-First stable release of this fork, promoting `0.1.0-rc.1` with the security
-remediation below applied on top. All service versions (backend, MCP server,
-frontend app and package) are set to `0.1.0`.
-
-### Security
-
-- Remediated the three Dependabot alerts open against `v0.1.0-rc.1`:
-  - `mcp` 1.27.2 → 1.28.1 in the MCP server (CVE-2026-59950, WebSocket
-    transport missing Host/Origin validation), now pinned to match the
-    backend; `pydantic` moved 2.11.7 → 2.13.4 alongside it, aligning all
-    three services.
-  - `h2` 4.3.0 → 4.4.1 in the backend (CVE-2026-71554, request smuggling
-    via duplicate Host headers), held as a transitive security pin.
-  - `mem0ai` 1.0.11 → 2.0.18 in the backend (CVE-2026-7597, improper input
-    validation) via a uv dependency override — every `agent-framework-mem0`
-    release compatible with the pinned `agent-framework==1.6.0` caps
-    `mem0ai<2`, the backend does not use the mem0 integration, and the fix
-    only exists in 2.x.
-
 ## [0.1.0-rc.1] - 2026-08-13
 
 First release candidate of this fork, cut from `main` after syncing with
@@ -131,4 +127,7 @@ and completing the hardening work below.
   to `0.1.0-rc.1`.
 
 [0.1.0]: https://github.com/cxzyr9hm2t-del/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator/releases/tag/v0.1.0
-[0.1.0-rc.1]: https://github.com/cxzyr9hm2t-del/Multi-Agent-Custom-Automation-Engine-Solution-Accelerator/releases/tag/v0.1.0-rc.1
+
+<!-- 0.1.0-rc.1 was superseded by 0.1.0 on the same day and never published as
+     a release of its own, so it has no tag to link to. -->
+
