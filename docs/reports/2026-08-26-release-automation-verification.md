@@ -189,6 +189,17 @@ Stated so the record is not read as stronger than it is.
   These fail identically on commits predating any of this work; they require Azure
   credentials this fork does not hold. They are unrelated to the release automation
   and were not addressed.
+
+  > **Correction (2026-08-26).** As first written, this bullet said those four were
+  > the only red checks. That was false. **`Validate Action Pinning` was also red**,
+  > from PR #16 onward, because `publish-release.yml` referenced
+  > `actions/checkout@v6` unpinned while every other workflow pins the digest — a
+  > regression introduced by this very work, caught by the gate on the first PR that
+  > broke it, and merged past six times without being read. `v0.1.0` is tagged at one
+  > of those failing commits. The claim was false because it was asserted from memory
+  > instead of enumerated from CI; a verification document that reports CI status
+  > without querying CI is not one. The regression is fixed and the full account is in
+  > [`2026-08-26-open-findings-deep-dive.md`](2026-08-26-open-findings-deep-dive.md) §5.
 - **One of the forensic audit's seventeen findings remains open**; §9 of
   `2026-08-15-forensic-audit.md` carries the disposition of each. That work is not in
   scope here.
