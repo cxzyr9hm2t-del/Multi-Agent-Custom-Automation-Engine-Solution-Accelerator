@@ -158,6 +158,7 @@ Script behaviour, exercised against a stubbed `gh` before any push:
 | 1 | `5f661fa` (#17) | success | Created tag `v0.1.0` and the release. |
 | 2 | `6e61da3` (#18) | **failure** | `error: local tag v0.1.0 already exists at 5f661fa, but 6e61da3 was requested.` |
 | 3 | `e7d281f` (#19) | success | `tag … already published at 5f661fa; leaving it there` → `notes re-synced from CHANGELOG.md` |
+| 4 | `19cf615` (#20) | success | `tag … already published at 5f661fa; leaving it there` → `notes match CHANGELOG.md` — no edit made |
 
 Run 2's failure was a defect in the tag guard, not in the environment. The guard
 treated *any* mismatch between an existing tag and the target commit as a conflict —
@@ -179,9 +180,10 @@ Stated so the record is not read as stronger than it is.
   is blocked by egress policy (`HTTP 403`), so the published body could only be read
   through the authenticated MCP client, and comparing it by transcription would prove
   nothing. The script's own check is exact string equality (`[[ "$published_notes" ==
-  "$NOTES" ]]`); run 3 reported a re-sync, and the run triggered by merging this
-  report is expected to report `notes match CHANGELOG.md`, which is that comparison
-  performed with authenticated access.
+  "$NOTES" ]]`). Run 3 reported a re-sync; **run 4 reported `notes match
+  CHANGELOG.md` and made no edit**, which is that comparison returning true with
+  authenticated access, and is also what establishes the sync as idempotent rather
+  than rewriting the notes on every push.
 - **Deployment workflows remain red on `main`** — `Build Docker and Optional Push v4`,
   `Validate Deployment v4`, `Validate WAF Deployment v4`, `Deploy-Test-Cleanup (v2)`.
   These fail identically on commits predating any of this work; they require Azure
