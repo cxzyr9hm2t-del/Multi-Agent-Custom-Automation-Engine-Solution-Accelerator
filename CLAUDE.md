@@ -46,7 +46,12 @@ PYTHONPATH=src:src/backend python -m pytest src/tests/backend/services/test_team
 PYTHONPATH=src:src/backend python -m pytest src/tests/backend -k test_name
 
 # MCP server tests
-PYTHONPATH=src:src/mcp_server python -m pytest src/tests/mcp_server
+# Note the interpreter: the MCP server owns a separate dependency set, so a bare
+# `python` (the backend's environment, or the system one) fails at collection with
+# ModuleNotFoundError on pydantic_settings, then fastmcp — an environment gap that
+# reads exactly like a code regression. Run `uv sync --frozen --extra dev` in
+# src/mcp_server first, then use that venv's interpreter:
+PYTHONPATH=src:src/mcp_server src/mcp_server/.venv/bin/python -m pytest src/tests/mcp_server
 ```
 
 `test_app.py` is run first and separately — it needs process isolation. CI enforces an **80% coverage floor**; the suite currently sits at ~86%.
@@ -112,3 +117,70 @@ Note `src/App/Dockerfile` installs from `requirements.txt` when that file is pre
 - Read all runtime configuration through the `config` object in `common/config/app_config.py` rather than touching `os.environ` directly.
 - User-facing input and uploaded team configs must pass RAI content-safety checks — see the helpers in `common/utils/team_utils.py` and their use in `api/router.py`.
 - Each service owns its own dependency set. A package pinned in one `pyproject.toml` is frequently at a different version in another, and `.github/requirements.txt` is a fourth, separate set used only by CI — check the specific manifest you are changing rather than assuming repo-wide consistency. An advisory CI job (`.github/workflows/version-drift.yml`) reports cross-manifest version drift on PRs that touch a manifest; it never fails the build, but read its report before applying a security bump to only one manifest — drift is exactly how one copy of a package gets hardened while the others stay vulnerable.
+
+## Working agreements
+
+These are operating rules for anyone (human or agent) working in this repository.
+They exist because each one was learned by getting it wrong first; the cost is
+recorded next to the rule so it is not mistaken for ceremony.
+
+### Report the actual time, in both formats
+
+Whenever a time is stated — a CI event, an incident window, a log line, "as of
+now" — give it as **local (12-hour) / local (24-hour) / UTC**, e.g.
+`11:57 AM / 11:57 EDT / 15:57 UTC`. The maintainer works in
+**America/New_York (UTC−4 EDT)**. Never report a bare UTC timestamp as if it
+were wall-clock time, and never state a time from memory or inference — read it:
+
+```bash
+echo "$(TZ=America/New_York date '+%-I:%M %p / %H:%M %Z') / $(date -u '+%H:%M UTC')"
+```
+
+Why: a whole incident was narrated in UTC to someone reading a clock four hours
+behind it, which makes "fifteen minutes ago" unverifiable by the person being
+told.
+
+### Never state a CI result you have not read
+
+A run's conclusion and its job's status are different objects and can disagree.
+A run reports `failure` when its only job was **cancelled without executing a
+step** — which is a scheduling failure, not a test failure. Before calling CI
+red, open the job:
+
+```
+mcp__github__actions_list  method=list_workflow_jobs  resource_id=<run_id>
+```
+
+If the job has no steps, or never started, the result says nothing about the
+code. Equally: `get_check_runs` returning 0 does **not** mean no run exists — a
+queued run has not produced check runs yet. Check runs and workflow runs are
+separate; read the one you are actually making a claim about.
+
+Why: six consecutive merges went through a red gate because nobody opened a
+check, and an unpinned action reached a published release. Later, the opposite
+error — a red board read as a code failure when runners were simply
+unavailable.
+
+### A gate you cannot open is worse than no gate
+
+Before making a check required, confirm it can actually run: no `paths` filter
+on `pull_request`, and currently green on the target branch. A required check
+that has not succeeded blocks every merge, including the one that would fix it.
+`scripts/enable-branch-protection.sh` enforces this in its own preflight; do not
+route around it with `--force` unless you have read why it refused.
+
+### Verify against the tree, not against your own summary
+
+Re-run the check, re-read the file, diff against `HEAD` — do not assert from
+memory, and do not trust a document's summary over the table underneath it.
+When reporting lint or test deltas on a file you edited, prove the findings are
+yours or pre-existing (`git show HEAD:<path>` and compare) rather than assuming.
+
+Why: a verification document once reported CI status without querying CI, and an
+audit's banner contradicted its own findings table in three separate ways.
+
+### Say what is not done
+
+Partial fixes get their scope stated in the code, the commit message, and the PR
+— not implied as complete. A deferred defect is named and left findable. If a
+step was skipped or blocked, say so plainly rather than reporting around it.
