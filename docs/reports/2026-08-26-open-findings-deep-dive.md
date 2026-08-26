@@ -209,10 +209,20 @@ being read.
 
 ### Recommended, in order
 
-1. **Require `Actions pinned to digests` and `Test Workflow with Coverage` as protected checks
-   on `main`.** This is the only item here that would have prevented the regression from
-   reaching a release, and it is a repository setting — it cannot be added by a workflow, and it
-   is the owner's to enable.
+1. **Require the CI gates as protected checks on `main`** — the only item here that would have
+   prevented the regression from reaching a release. A workflow cannot do this, because a
+   workflow cannot refuse a merge; it is a repository setting and needs someone with admin.
+   `scripts/enable-branch-protection.sh` applies it in one command and reads the result back:
+
+   ```bash
+   ./scripts/enable-branch-protection.sh --dry-run   # show what would change
+   ./scripts/enable-branch-protection.sh             # apply, then verify
+   ```
+
+   It requires the two check runs by their **job** names — `Actions pinned to digests` and
+   `test` — not their workflow titles, which is the detail that makes this fiddly by hand.
+   Admins are included: with the rule not enforced on admins, the person most likely to merge
+   walks straight through it, which is precisely the failure being prevented.
 2. **Decide M7's ending** — backfill, or a cutoff date. Small, mechanical once chosen.
 3. **Decide C1** — the app registration, or accept documented risk. Everything else in the
    access-control model rests on it.
