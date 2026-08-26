@@ -1746,12 +1746,17 @@ async def get_generated_image(blob_name: str, token: str = Query(None)):
     the rest of the API uses cannot apply. A short-lived token from
     ``/image_token`` travels in the query string instead.
 
-    The token proves the requester is an authenticated user. It does **not**
-    prove they own this particular image: generated blobs are stored under a
-    ``uuid4`` name with no ownership record, so there is nothing to check
-    against. This closes anonymous access, not cross-user access. Recording an
-    owner at generation time (``mcp_server/services/image_service.py``) is what
-    would allow the stronger check.
+    The token proves the requester is an authenticated user. Ownership is
+    checked on top of that: the backend records an owner the first time a blob
+    name appears in that user's own agent output
+    (``common/utils/image_assets.py``), and a requester who is not the recorded
+    owner gets a 403.
+
+    Images generated before that recording existed have no entry. By default
+    they are allowed on the token alone, so existing conversations keep
+    rendering; setting ``IMAGE_REQUIRE_OWNERSHIP_RECORD`` denies them instead.
+    Run ``scripts/backfill_image_ownership.py`` before setting it — see
+    ``docs/image_ownership_backfill.md``.
 
     Tokens are optional so that deployments without the authenticating front
     door keep working; when one is supplied it must be valid.
@@ -1788,6 +1793,17 @@ async def get_generated_image(blob_name: str, token: str = Query(None)):
             )
             raise HTTPException(status_code=403, detail="Image not found")
         if owner is None:
+            if config.IMAGE_REQUIRE_OWNERSHIP_RECORD:
+                logging.warning(
+                    "Rejected image '%s': no ownership record and "
+                    "IMAGE_REQUIRE_OWNERSHIP_RECORD is set",
+                    blob_name,
+                )
+                track_event_if_configured(
+                    "Error_Image_Forbidden",
+                    {"blob_name": blob_name, "user_id": requester},
+                )
+                raise HTTPException(status_code=403, detail="Image not found")
             logging.info(
                 "Image '%s' has no ownership record; allowing on token alone", blob_name
             )
