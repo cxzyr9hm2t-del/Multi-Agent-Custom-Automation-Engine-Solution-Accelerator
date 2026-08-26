@@ -1,0 +1,54 @@
+name: Dependency Audit
+
+# Advisory only — this never fails the build, matching version-drift.yml.
+#
+# This is the pull-request half of dependency auditing. scheduled-security-sweep.yml
+# already owns the scheduled half: it runs pip-audit over the resolved lockfiles
+# every Monday, and it is the authority there. This workflow deliberately does
+# NOT carry a schedule, because two jobs on the same cron auditing the same
+# packages is cost without signal.
+#
+# What it adds is timing and breadth:
+#
+#   * Timing — the sweep is weekly, so a lock bump that introduces a vulnerable
+#     transitive package can sit unreported for up to seven days, and is found
+#     after review rather than during it. This runs on the pull request that
+#     changes the lock.
+#   * Breadth — one pass over every dependency file at once, including the two
+#     infra requirements sets and tests/e2e-test, and including dev
+#     dependencies. It also names what it could not check (unpinned entries)
+#     rather than passing over them silently.
+#
+# Keep it advisory. A findings-gate belongs on the sweep, which is where the
+# fail-on-vulnerability posture already lives.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened, synchronize]
+    paths:
+      - '**/uv.lock'
+      - '**/package-lock.json'
+      - '**/pyproject.toml'
+      - '**/requirements.txt'
+      - '.github/scripts/audit_dependencies.py'
+      - '.github/workflows/dependency-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          # tomllib requires 3.11+; the script is otherwise stdlib-only.
+          python-version: '3.11'
+
+      - name: Audit installed dependency closure against OSV
+        run: python .github/scripts/audit_dependencies.py | tee "$GITHUB_STEP_SUMMARY"
