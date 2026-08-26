@@ -14,6 +14,13 @@
 # protection can, which is a repository setting.
 #
 # Requires the GitHub CLI (gh) authenticated as someone with admin on the repo.
+#
+# A required check that does not run is NOT treated as passed: GitHub reports it
+# as "Expected" and blocks the merge indefinitely. Both workflows below
+# therefore run on every pull request — their paths filters were removed for
+# the pull_request trigger when this was written. Before adding a check here,
+# confirm it has no paths filter on pull_request, or a docs-only pull request
+# will never be mergeable again.
 
 set -euo pipefail
 
