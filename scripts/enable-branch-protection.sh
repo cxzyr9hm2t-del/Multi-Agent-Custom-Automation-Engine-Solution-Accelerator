@@ -133,3 +133,16 @@ else
     echo "error: protection did not read back after applying." >&2
     exit 1
 fi
+
+cat <<EOF
+
+If a pull request ever sits forever on a required check that reads
+"Expected" and never runs, that check did not fire for that pull request
+and nothing will merge until the rule is lifted. Undo it with:
+
+    gh api -X DELETE $API
+
+That removes protection entirely and takes effect immediately. Re-run
+this script once the check is firing again. Keeping the way out written
+down is the point: a gate you cannot open is worse than no gate.
+EOF
