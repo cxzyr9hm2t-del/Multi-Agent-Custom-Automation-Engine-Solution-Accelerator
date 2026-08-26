@@ -1,0 +1,54 @@
+name: Publish Release
+
+# Tags a commit and publishes the matching GitHub release, taking the notes
+# from the CHANGELOG.md section for that version. Run it from the Actions tab
+# (or `gh workflow run publish-release.yml -f version=v0.1.0`).
+#
+# The work itself lives in scripts/publish-release.sh, so a release published
+# here and one published from a maintainer's machine follow the same code path.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to publish, e.g. v0.1.0'
+        required: true
+        type: string
+      commitish:
+        description: 'Commit to tag (default: the tip of the selected branch)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Preview only — create nothing'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Full history so any commit can be tagged, not just the tip.
+          fetch-depth: 0
+
+      - name: Configure git identity
+        # An annotated tag needs a tagger; runners have no git identity by default.
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Publish
+        # Inputs go through the environment rather than ${{ }} interpolation so
+        # that their contents can never be parsed as shell.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          COMMITISH: ${{ inputs.commitish }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: ./scripts/publish-release.sh "$VERSION" "$COMMITISH"
