@@ -64,7 +64,10 @@ if [[ -z "$NOTES" ]]; then
 fi
 
 # Resolve the commit to tag: explicit argument, else the tip of origin/main.
+# Whether it was explicit decides how a pre-existing tag is treated below.
+EXPLICIT_TARGET="yes"
 if [[ -z "$COMMITISH" ]]; then
+    EXPLICIT_TARGET=""
     git fetch --quiet origin main
     COMMITISH="$(git rev-parse origin/main)"
 fi
@@ -89,12 +92,23 @@ echo
 #    anyone who already fetched it.
 # ^{commit} dereferences annotated tags, whose ref resolves to the tag object.
 if existing="$(git rev-parse -q --verify "refs/tags/$VERSION^{commit}")"; then
-    if [[ "$existing" != "$TARGET_SHA" ]]; then
-        echo "error: local tag $VERSION already exists at ${existing:0:7}," >&2
+    if [[ "$existing" == "$TARGET_SHA" ]]; then
+        echo "✓ local tag $VERSION already at ${TARGET_SHA:0:7}"
+    elif [[ -n "$EXPLICIT_TARGET" ]]; then
+        # Someone named a commit that contradicts a tag that already exists.
+        # That is a real conflict, and picking either silently would be wrong.
+        echo "error: tag $VERSION already exists at ${existing:0:7}," >&2
         echo "       but ${TARGET_SHA:0:7} was requested. Delete it first if that is intended." >&2
         exit 1
+    else
+        # No commit was named, and main has simply moved on since this version
+        # was released. The published tag is what the release refers to, so it
+        # stays put and the rest of the run works against it — that is what
+        # lets a later push re-sync the notes of an already-shipped version.
+        echo "✓ tag $VERSION already published at ${existing:0:7}; leaving it there"
+        echo "  (main is now at ${TARGET_SHA:0:7}; the tag is not moved)"
+        TARGET_SHA="$existing"
     fi
-    echo "✓ local tag $VERSION already at ${TARGET_SHA:0:7}"
 else
     run git tag -a "$VERSION" "$TARGET_SHA" -m "$VERSION"
     echo "✓ created local tag $VERSION"
