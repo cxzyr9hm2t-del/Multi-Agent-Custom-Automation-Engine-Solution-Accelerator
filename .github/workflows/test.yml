@@ -71,11 +71,23 @@ jobs:
         env:
           PYTHONPATH: src:src/backend
         run: |
-          # Run test_app.py first (isolation required)
-          python -m pytest src/tests/backend/test_app.py --cov=src/backend -q
+          # pipefail is REQUIRED, not stylistic. Actions runs `bash -e`, which
+          # does not set it, so `pytest | tee` would exit with tee's status and
+          # a failing suite would report success. The whole point of this job is
+          # that a red suite is visible.
+          set -o pipefail
+
+          # Run test_app.py first (isolation required). The pass count is
+          # captured so the claims gate below can compare it against the number
+          # CLAUDE.md states, rather than anyone having to remember to.
+          python -m pytest src/tests/backend/test_app.py --cov=src/backend -q \
+            | tee /tmp/isolated.txt
+          echo "BACKEND_ISOLATED=$(grep -oE '^[0-9]+ passed' /tmp/isolated.txt | grep -oE '^[0-9]+')" >> $GITHUB_ENV
 
           # Run remaining backend tests with coverage append
-          python -m pytest src/tests/backend --cov=src/backend --cov-append --cov-report=term --cov-report=xml --junitxml=pytest.xml --ignore=src/tests/backend/test_app.py
+          python -m pytest src/tests/backend --cov=src/backend --cov-append --cov-report=term --cov-report=xml --junitxml=pytest.xml --ignore=src/tests/backend/test_app.py \
+            | tee /tmp/remainder.txt
+          echo "BACKEND_REMAINDER=$(grep -oE '[0-9]+ passed' /tmp/remainder.txt | head -1 | grep -oE '^[0-9]+')" >> $GITHUB_ENV
 
       - name: Check coverage threshold
         if: env.skip_tests == 'false'
@@ -92,6 +104,26 @@ jobs:
             echo "::error::coverage.xml not found"
             exit 1
           fi
+
+      # Two gates against the failure this repository keeps repeating: a claim
+      # and its evidence stored apart, with nothing comparing them. Both are
+      # stdlib-only, so neither needs an install step, and both run after the
+      # suite because they consume its results.
+      - name: Documented claims still match the tree
+        if: env.skip_tests == 'false'
+        run: |
+          python3 scripts/verify_claims.py \
+            --backend-isolated "$BACKEND_ISOLATED" \
+            --backend-remainder "$BACKEND_REMAINDER" \
+            --coverage-xml coverage.xml
+
+      - name: No new test-isolation leaks
+        if: env.skip_tests == 'false'
+        run: |
+          # --baseline holds the existing 12 flat rather than failing the build
+          # on a backlog nobody introduced today. Adding a thirteenth fails.
+          # Lower this number whenever one is fixed, to lock the gain in.
+          python3 scripts/check_test_isolation.py --baseline 12
 
       - name: Pytest Coverage Comment
         if: |

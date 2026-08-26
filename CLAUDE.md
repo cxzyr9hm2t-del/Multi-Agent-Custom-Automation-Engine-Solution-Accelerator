@@ -58,7 +58,7 @@ PYTHONPATH=src:src/mcp_server src/mcp_server/.venv/bin/python -m pytest src/test
 
 Two things about how the suite is invoked, worth knowing before you debug them:
 
-- **`test_app.py` must run in its own process.** Running the whole tree in one pytest invocation aborts collection with `No module named 'orchestration.orchestration_manager'` — `test_app.py` disturbs import state for the rest of the tree. This is why CI runs it first and separately, and why the two commands above are two commands. Split that way, the full suite passes (29 + 834).
+- **`test_app.py` must run in its own process.** Running the whole tree in one pytest invocation aborts collection with `No module named 'orchestration.orchestration_manager'` — `test_app.py` disturbs import state for the rest of the tree. This is why CI runs it first and separately, and why the two commands above are two commands. Split that way, the full suite passes (31 + 927).
 - `asyncio_mode` is **not** configured anywhere in this repo, despite what older docs claim. The root `pyproject.toml` only sets `addopts = "-p pytest_asyncio"`.
 
 Three config defects were found while writing this file and fixed in the same change, so you will not hit them — noted here only because older checkouts still have them: the root `conftest.py` was dead code pointing above the repository at a `v4/` layout that no longer exists (deleted); `.github/workflows/test.yml` passed `--cov-config=.coveragerc` for a file that no longer exists (flag removed — coverage is unchanged at 86%, since `[tool.coverage.*]` in the root `pyproject.toml` now applies); and `src/mcp_server/pytest.ini` used the `setup.cfg` header `[tool:pytest]`, which meant its settings were silently inert (corrected to `[pytest]`).
@@ -178,6 +178,31 @@ yours or pre-existing (`git show HEAD:<path>` and compare) rather than assuming.
 
 Why: a verification document once reported CI status without querying CI, and an
 audit's banner contradicted its own findings table in three separate ways.
+
+**This rule is now enforced, not merely stated.** Every recorded failure in this
+repository has the same shape — *a claim and the evidence for it stored in
+different places, with nothing comparing them* — so discipline was never going
+to be enough. Two gates run in `test.yml`:
+
+- **`scripts/verify_claims.py`** re-measures the facts this file asserts (suite
+  size, coverage, the coverage floor, workflow permissions, action pinning) and
+  fails the build when a documented number no longer matches the tree. It found
+  its first stale claim on its first run: this file said the suite was
+  `29 + 834` when it was `31 + 927`. A stale number reads exactly like a fresh
+  one, which is why review never caught it.
+- **`scripts/check_test_isolation.py`** fails when a test module replaces a
+  first-party module in `sys.modules` and never restores it. That leak is how a
+  test passes while exercising nothing: it is what made the image-ownership
+  backfill's extraction helper silently mocked, so its tests went green over a
+  database the script had never touched.
+
+The isolation gate runs with `--baseline 12`, holding the existing backlog flat
+while refusing a thirteenth. **Lower the number whenever you fix one**, or the
+gain is not locked in. Both scripts are stdlib-only and take `--report` to list
+findings without failing.
+
+If you add a measurable claim to this file, add it to `verify_claims.py` too. A
+claim nothing re-measures is a claim that will be wrong eventually.
 
 ### Say what is not done
 
