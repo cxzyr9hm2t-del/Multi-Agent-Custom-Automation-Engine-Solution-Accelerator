@@ -54,11 +54,11 @@ PYTHONPATH=src:src/backend python -m pytest src/tests/backend -k test_name
 PYTHONPATH=src:src/mcp_server src/mcp_server/.venv/bin/python -m pytest src/tests/mcp_server
 ```
 
-`test_app.py` is run first and separately — it needs process isolation. CI enforces an **80% coverage floor**; the suite currently sits at ~86%.
+`test_app.py` is run first and separately — it needs process isolation. CI enforces an **80% coverage floor**; the suite currently sits at ~87%.
 
 Two things about how the suite is invoked, worth knowing before you debug them:
 
-- **`test_app.py` must run in its own process.** Running the whole tree in one pytest invocation aborts collection with `No module named 'orchestration.orchestration_manager'` — `test_app.py` disturbs import state for the rest of the tree. This is why CI runs it first and separately, and why the two commands above are two commands. Split that way, the full suite passes (31 + 927).
+- **`test_app.py` must run in its own process.** Running the whole tree in one pytest invocation aborts collection with `No module named 'orchestration.orchestration_manager'` — `test_app.py` disturbs import state for the rest of the tree. This is why CI runs it first and separately, and why the two commands above are two commands. Split that way, the full suite passes (31 + 987).
 - `asyncio_mode` is **not** configured anywhere in this repo, despite what older docs claim. The root `pyproject.toml` only sets `addopts = "-p pytest_asyncio"`.
 
 Three config defects were found while writing this file and fixed in the same change, so you will not hit them — noted here only because older checkouts still have them: the root `conftest.py` was dead code pointing above the repository at a `v4/` layout that no longer exists (deleted); `.github/workflows/test.yml` passed `--cov-config=.coveragerc` for a file that no longer exists (flag removed — coverage is unchanged at 86%, since `[tool.coverage.*]` in the root `pyproject.toml` now applies); and `src/mcp_server/pytest.ini` used the `setup.cfg` header `[tool:pytest]`, which meant its settings were silently inert (corrected to `[pytest]`).
