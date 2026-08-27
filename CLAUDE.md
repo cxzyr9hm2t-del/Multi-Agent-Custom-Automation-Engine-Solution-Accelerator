@@ -196,7 +196,7 @@ to be enough. Two gates run in `test.yml`:
   backfill's extraction helper silently mocked, so its tests went green over a
   database the script had never touched.
 
-The isolation gate runs with `--baseline 12`, holding the existing backlog flat
+The isolation gate runs with `--baseline 9`, holding the existing backlog flat
 while refusing a thirteenth. **Lower the number whenever you fix one**, or the
 gain is not locked in. Both scripts are stdlib-only and take `--report` to list
 findings without failing.

@@ -26,6 +26,16 @@ mock_config.MCP_SERVER_ENDPOINT = 'https://test.mcp.endpoint.com'
 
 mock_config_module = MagicMock()
 mock_config_module.config = mock_config
+# Capture the real module before it is replaced, so it can be put back in
+# teardown_module below. A MagicMock left in sys.modules is inherited by every
+# module imported afterwards and answers any attribute truthily, which is how a
+# downstream test passes while exercising nothing. The azure.* names above are
+# left alone deliberately: they go in via setdefault, so they never displace a
+# real module, and the rest of the suite relies on them for the whole session.
+_ORIGINAL_MODULES = {
+    'common.config.app_config': sys.modules.get('common.config.app_config'),
+}
+
 sys.modules['common.config.app_config'] = mock_config_module
 
 import backend.services.mcp_service as mcp_service_module
@@ -186,3 +196,12 @@ class TestMCPService:
         with patch.object(service, 'post_json', return_value=error_response):
             result = await service.invoke_tool("failing_tool", {"cause_error": True})
             assert result["error"] == "Tool execution failed"
+
+
+def teardown_module(module):
+    """Restore the module this file replaced in sys.modules at import time."""
+    for name, original in _ORIGINAL_MODULES.items():
+        if original is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original

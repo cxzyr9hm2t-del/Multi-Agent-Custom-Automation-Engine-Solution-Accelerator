@@ -120,10 +120,11 @@ jobs:
       - name: No new test-isolation leaks
         if: env.skip_tests == 'false'
         run: |
-          # --baseline holds the existing 12 flat rather than failing the build
-          # on a backlog nobody introduced today. Adding a thirteenth fails.
+          # --baseline holds the existing backlog flat rather than failing the
+          # build on offenders nobody introduced today. Adding one more fails.
           # Lower this number whenever one is fixed, to lock the gain in.
-          python3 scripts/check_test_isolation.py --baseline 12
+          # 12 -> 9: test_base_api_service, test_foundry_service, test_mcp_service.
+          python3 scripts/check_test_isolation.py --baseline 9
 
       - name: Pytest Coverage Comment
         if: |
