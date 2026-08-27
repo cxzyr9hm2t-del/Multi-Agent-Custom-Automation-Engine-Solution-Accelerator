@@ -63,7 +63,14 @@ jobs:
           # Audit the resolved lockfile, not the manifest: the manifest states
           # ranges, the lockfile states what would actually be installed.
           uv export --frozen --no-hashes --no-dev -o /tmp/${{ matrix.name }}.txt
-          pip-audit -r /tmp/${{ matrix.name }}.txt
+          # --no-deps --disable-pip is required, not an optimisation. The export
+          # is already a fully resolved closure, and asking pip to re-resolve it
+          # fails outright on src/backend: [tool.uv] override-dependencies pins
+          # mem0ai==2.0.18 past agent-framework-mem0's `mem0ai<2` cap, which uv
+          # honours and pip cannot, so pip returns ResolutionImpossible and the
+          # job dies before auditing anything. Without these flags this job has
+          # been failing for backend since that override landed.
+          pip-audit -r /tmp/${{ matrix.name }}.txt --no-deps --disable-pip
 
   ci-requirements:
     name: CI requirements
@@ -83,6 +90,86 @@ jobs:
           # A fourth, separate dependency set that no service's lockfile covers.
           pip install pip-audit
           pip-audit -r .github/requirements.txt
+
+  infra-requirements:
+    name: Infra requirements
+    # Two more dependency sets that no service lockfile and no job above covers.
+    # They are not incidental: the post-provision scripts run against the real
+    # subscription during `azd up`, and pypdf lives here — it parses dataset
+    # PDFs in index_datasets.py and has carried advisories before. Auditing the
+    # three services and assuming the rest is the same mistake this workflow's
+    # header warns about, one directory further out.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        file:
+          - infra/scripts/post-provision/requirements.txt
+          - infra/vscode_web/requirements.txt
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: '3.11'
+
+      - name: Audit ${{ matrix.file }}
+        run: |
+          set -euo pipefail
+          pip install pip-audit
+          # No --no-deps here, deliberately. Unlike the lockfile exports above,
+          # these files list direct pins only and carry no transitive closure,
+          # so letting pip resolve is what surfaces a vulnerable transitive
+          # dependency rather than only the fourteen names written down.
+          pip-audit -r "${{ matrix.file }}"
+
+  dev-dependencies:
+    name: Dev dependencies (advisory)
+    # The jobs above export with --no-dev, which is right for "what ships" and
+    # wrong for "what we run": it hides eight packages in src/backend alone,
+    # among them pytest — whose GHSA-6w46-j5rx-g56g was a real finding here and
+    # was fixed by bumping to 9.0.3. A test-tool advisory is not a production
+    # incident, so this reports without blocking; the jobs above still gate.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            directory: src/backend
+          - name: mcp_server
+            directory: src/mcp_server
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: '3.11'
+
+      - name: Install uv and pip-audit
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install uv pip-audit
+
+      - name: Audit ${{ matrix.name }} including dev dependencies
+        working-directory: ${{ matrix.directory }}
+        run: |
+          set -euo pipefail
+          # --all-extras covers mcp_server's [project.optional-dependencies];
+          # omitting --no-dev covers backend's [dependency-groups]. Both are
+          # needed because the two services declare their test toolchain
+          # differently. --no-emit-project drops the '-e .' self-reference,
+          # which pip-audit has no version to check.
+          uv export --frozen --no-hashes --all-extras --no-emit-project \
+            -o /tmp/${{ matrix.name }}-dev.txt
+          # Same flags, same reason as the production job above.
+          pip-audit -r /tmp/${{ matrix.name }}-dev.txt --no-deps --disable-pip
 
   frontend-dependencies:
     name: Frontend packages
