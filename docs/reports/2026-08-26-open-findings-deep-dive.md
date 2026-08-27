@@ -223,6 +223,74 @@ being read.
    `test` — not their workflow titles, which is the detail that makes this fiddly by hand.
    Admins are included: with the rule not enforced on admins, the person most likely to merge
    walks straight through it, which is precisely the failure being prevented.
+
+   **Do not run it while Actions is unhealthy** — and as of this writing, it is. The script
+   now enforces that itself rather than trusting the reader: it reads the required checks on
+   the branch tip and refuses to apply unless every one is a completed success, because
+   protection does not wait for a check to become available. A required check that cannot run
+   blocks every merge, which would close the repository with the fix for it behind the same
+   gate. `--force` overrides for the case where the operator knows better. See §7.
 2. **Decide M7's ending** — backfill, or a cutoff date. Small, mechanical once chosen.
 3. **Decide C1** — the app registration, or accept documented risk. Everything else in the
    access-control model rests on it.
+
+---
+
+## 7. The Actions incident of 2026-08-26, and why it blocks recommendation 1
+
+Recorded because it is the reason the first recommendation is not simply "run the script",
+and because during it CI reported failures that were not real — which is exactly the
+circumstance in which someone starts "fixing" working code.
+
+### What the runs show
+
+`Validate Action Pinning` and `Test Workflow with Coverage`, by run, around the transition:
+
+| Time (UTC) | Workflow / run | Result |
+|---|---|---|
+| 14:47–14:51 | pinning 13, test 54, test 55 | success, ~1–1.5 min each |
+| 15:03 | test 56 | `startup_failure` |
+| 15:16 | test 57 | queued, never started |
+| 15:17 | pinning 15 | job queued 15:17:36 → **cancelled 15:32:38** |
+| 15:21 | test 59 | `startup_failure` |
+| 15:30–15:37 | pinning 17, 18, test 60 | queued, never started |
+
+The last healthy run was **14:50 UTC**. Everything from roughly **15:03** onward either failed
+at startup or waited about fifteen minutes for a runner and was cancelled.
+
+### The reporting artefact worth knowing about
+
+Run 15 presents as `conclusion: failure` at the run level while its only job reads
+`cancelled` — and, read mid-flight, the run showed `completed/failure` while the job still
+said `queued`. That combination looks impossible and invites the conclusion that the API is
+lying. It is not: the job was cancelled for want of a runner, and the run inherits a failure
+conclusion from it, with the two endpoints briefly disagreeing while it settles.
+
+The practical rule: **a red check here does not by itself mean a red tree.** Open the job. If
+it has no steps, or its steps never ran, the result says nothing about the code.
+
+### Proof that the tree was fine throughout
+
+The pinning gate's three assertions, run locally against `8fbc9fe` — the same tree CI marked
+red:
+
+- every action reference pinned to a 40-character digest — **pass**
+- 32/32 workflows parse as YAML — **pass**
+- 32/32 workflows declare top-level `permissions` — **pass**
+
+And the suite: **31 + 927 passing**, `flake8 --config=.flake8 src/backend` clean.
+
+### What was changed as a result
+
+`scripts/enable-branch-protection.sh` gained a preflight. It reads
+`repos/{repo}/commits/{branch}/check-runs` — the same signal branch protection evaluates —
+and refuses to apply unless every required check is a completed success. A check name that is
+absent fails the preflight too, since "never ran" is what GitHub renders as `Expected`
+forever, and is the more dangerous state rather than the harmless one.
+
+Verified against a stubbed `gh` across six paths: refuses on the starved state, refuses on a
+missing check name, warns without failing under `--dry-run`, reports safety under `--dry-run`
+when green, applies and reads back when green, and applies under `--force` when red while
+printing the undo command first.
+
+Nothing was changed in response to the false reds, which was the other available mistake.

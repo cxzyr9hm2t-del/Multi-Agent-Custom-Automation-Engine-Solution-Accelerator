@@ -24,6 +24,38 @@ sys.modules.setdefault('azure.ai', MagicMock())
 sys.modules.setdefault('azure.ai.projects', MagicMock())
 sys.modules.setdefault('azure.ai.projects.aio', MagicMock())
 
+# The modules replaced below are real ones, and the replacements are installed
+# at import time because plan_service binds them when *it* is imported. What
+# was missing is putting them back: a MagicMock left in sys.modules is inherited
+# by every test that imports the same name afterwards, and answers any attribute
+# truthily rather than failing. That cost real time — a backfill script's
+# extraction helper was silently mocked out, so its tests passed alone and
+# failed in the full suite, reporting a clean run over an untouched database.
+#
+# Captured here, before the first replacement, and restored in teardown_module
+# at the bottom of this file. Note the limit: teardown runs after this module's
+# tests, so it repairs imports made during later *runs*, not during collection.
+# A module that imports a real common.* at collection time still needs to guard
+# itself — see src/tests/backend/test_backfill_image_ownership.py.
+#
+# The four azure.* names above are deliberately not in this list. They go in
+# via setdefault, so they never displace a real module, and `azure` is a shared
+# third-party namespace the rest of the suite relies on being present for the
+# whole session — restoring it here would break the files collected after this
+# one. Only first-party names, which this file does clobber, are restored.
+_STUBBED_MODULES = (
+    'common.config.app_config',
+    'common.database.database_factory',
+    'common.utils.event_utils',
+    'common.utils.image_assets',
+    'common.models.messages',
+    'models',
+    'models.messages',
+    'orchestration',
+    'orchestration.connection_config',
+)
+_ORIGINAL_MODULES = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
+
 # Mock common modules
 mock_config_module = MagicMock()
 mock_config = MagicMock()
@@ -420,3 +452,19 @@ class TestPlanService:
     def test_logging_integration(self):
         logger = logging.getLogger('backend.services.plan_service')
         assert logger is not None
+
+
+def teardown_module(module):
+    """Put back the modules this file replaced in sys.modules at import time.
+
+    Without this the MagicMocks outlive the file that installed them and are
+    inherited by anything importing the same names later. See the note beside
+    _STUBBED_MODULES at the top for what that cost.
+    """
+    for name, original in _ORIGINAL_MODULES.items():
+        if original is None:
+            # Nothing was there before, so drop the stub entirely and let the
+            # next import load the real module.
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original

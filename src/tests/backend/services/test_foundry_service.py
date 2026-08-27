@@ -47,6 +47,16 @@ mock_config.get_azure_credentials = _mock_get_azure_credentials
 
 mock_config_module = MagicMock()
 mock_config_module.config = mock_config
+# Capture the real module before it is replaced, so it can be put back in
+# teardown_module below. A MagicMock left in sys.modules is inherited by every
+# module imported afterwards and answers any attribute truthily, which is how a
+# downstream test passes while exercising nothing. The azure.* names above are
+# left alone deliberately: they go in via setdefault, so they never displace a
+# real module, and the rest of the suite relies on them for the whole session.
+_ORIGINAL_MODULES = {
+    'common.config.app_config': sys.modules.get('common.config.app_config'),
+}
+
 sys.modules['common.config.app_config'] = mock_config_module
 
 import backend.services.foundry_service as foundry_service_module
@@ -321,3 +331,12 @@ class TestFoundryServiceErrorHandling:
             service = FoundryService()
             deployments = await service.list_model_deployments()
             assert deployments == []
+
+
+def teardown_module(module):
+    """Restore the module this file replaced in sys.modules at import time."""
+    for name, original in _ORIGINAL_MODULES.items():
+        if original is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
