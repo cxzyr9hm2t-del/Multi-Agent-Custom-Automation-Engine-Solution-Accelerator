@@ -1079,6 +1079,11 @@ class TestGetGeneratedImage:
         cfg = MagicMock()
         cfg.AZURE_STORAGE_BLOB_URL = "https://blob"
         cfg.AZURE_STORAGE_IMAGES_CONTAINER = "images"
+        # Every flag this endpoint reads must be set explicitly. A MagicMock
+        # answers any attribute with a truthy Mock, so an unset flag silently
+        # takes its enabled branch and the test asserts the opposite of what it
+        # reads as.
+        cfg.IMAGE_REQUIRE_OWNERSHIP_RECORD = False
         monkeypatch.setattr(router_mod, "config", cfg)
 
     def test_an_invalid_token_is_rejected(self, rt, monkeypatch):
@@ -1107,6 +1112,38 @@ class TestGetGeneratedImage:
         resp = rt.client.get(f"/api/v4/images/pic.png?token={token}")
 
         # Reaches blob storage (which is unreachable here) rather than 403ing.
+        assert resp.status_code != 403
+
+    def test_an_image_with_no_record_is_refused_once_enforcement_is_on(
+        self, rt, monkeypatch
+    ):
+        """After the backfill, IMAGE_REQUIRE_OWNERSHIP_RECORD closes the fallback."""
+        resource_tokens = router_mod.resource_tokens
+        self._configure_storage(rt, monkeypatch)
+        monkeypatch.setattr(
+            router_mod.config, "IMAGE_REQUIRE_OWNERSHIP_RECORD", True, raising=False
+        )
+        rt.store.get_image_asset = AsyncMock(return_value=None)
+        token = resource_tokens.mint(resource_tokens.PURPOSE_IMAGE, "", "user-1", 60)
+
+        resp = rt.client.get(f"/api/v4/images/pic.png?token={token}")
+
+        assert resp.status_code == 403
+
+    def test_enforcement_does_not_disturb_an_image_the_caller_owns(
+        self, rt, monkeypatch
+    ):
+        """Turning it on must deny only the unowned, not everything."""
+        resource_tokens = router_mod.resource_tokens
+        self._configure_storage(rt, monkeypatch)
+        monkeypatch.setattr(
+            router_mod.config, "IMAGE_REQUIRE_OWNERSHIP_RECORD", True, raising=False
+        )
+        rt.store.get_image_asset = AsyncMock(return_value=MagicMock(user_id="user-1"))
+        token = resource_tokens.mint(resource_tokens.PURPOSE_IMAGE, "", "user-1", 60)
+
+        resp = rt.client.get(f"/api/v4/images/pic.png?token={token}")
+
         assert resp.status_code != 403
 
 

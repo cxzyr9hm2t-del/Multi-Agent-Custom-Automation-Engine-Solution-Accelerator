@@ -125,6 +125,15 @@ class AppConfig:
         self.AZURE_STORAGE_IMAGES_CONTAINER = self._get_optional(
             "AZURE_STORAGE_IMAGES_CONTAINER", "generated-images"
         )
+        # Deny a generated image that carries no ownership record, instead of
+        # allowing it on the request token alone. Images created before
+        # ownership was recorded have no entry, so turning this on before
+        # scripts/backfill_image_ownership.py has run against this deployment's
+        # data stops every one of them rendering. See
+        # docs/image_ownership_backfill.md for the order to do it in.
+        self.IMAGE_REQUIRE_OWNERSHIP_RECORD = self._get_optional(
+            "IMAGE_REQUIRE_OWNERSHIP_RECORD", "false"
+        ).strip().lower() in ("true", "1", "yes")
         # self.BING_CONNECTION_NAME = self._get_optional("BING_CONNECTION_NAME")
 
         # Cached clients and resources

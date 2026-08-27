@@ -15,6 +15,12 @@ on:
       - 'conftest.py'
       - '.github/requirements.txt'
       - '.github/workflows/test.yml'
+  # No paths filter on pull_request, deliberately. This job is a required
+  # status check on main, and a required check that does not run is not
+  # skipped — GitHub reports it as "Expected" and blocks the merge forever.
+  # With a paths filter, any pull request touching only docs or scripts could
+  # never merge. Running the suite on every pull request costs about a minute
+  # and keeps the gate honest. The push filter above is unaffected.
   pull_request:
     types:
       - opened
@@ -25,15 +31,6 @@ on:
       - main
       - demo-v4
       - dev
-    paths:
-      - 'src/backend/**/*.py'
-      - 'src/tests/**/*.py'
-      - 'src/mcp_server/**/*.py'
-      - 'pytest.ini'
-      - 'conftest.py'
-      - '.github/requirements.txt'
-      - 'src/**/pyproject.toml'
-      - '.github/workflows/test.yml'
 
 permissions:
   contents: read

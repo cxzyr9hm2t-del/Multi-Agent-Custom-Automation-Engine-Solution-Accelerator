@@ -1,0 +1,109 @@
+name: Publish Release
+
+# Publishes the release for the version currently on main: tags the commit and
+# creates the GitHub release, taking its notes from the matching CHANGELOG.md
+# section. The work lives in scripts/publish-release.sh, so a release published
+# here and one published from a maintainer's machine follow the same code path.
+#
+# It runs automatically on every push to main and holds one invariant: the
+# version on main has a published release whose notes match its CHANGELOG.md
+# entry. So bumping the version and updating the changelog is all it takes to
+# cut a release, and correcting a shipped version's entry re-syncs the
+# published notes on the next push. It never moves a tag that already exists.
+# It can also be run by hand from the Actions tab for a specific version or
+# commit.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to publish, e.g. v0.1.0'
+        required: true
+        type: string
+      commitish:
+        description: 'Commit to tag (default: the tip of the selected branch)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Preview only — create nothing'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          # Full history so any commit can be tagged, not just the tip.
+          fetch-depth: 0
+
+      - name: Decide whether a release is due
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT" == "workflow_dispatch" ]]; then
+            # A hand-run publish is always deliberate: honour it as given and
+            # let the script's own guards handle an already-published version.
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The newest *released* version documented in the changelog. The
+          # leading [0-9] class skips an [Unreleased] heading.
+          VERSION="$(grep -m1 -oP '^## \[\K[0-9][^]]*' CHANGELOG.md || true)"
+          if [[ -z "$VERSION" ]]; then
+            echo "No released version documented in CHANGELOG.md — nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The changelog and the manifests must agree. A mismatch means the
+          # tree is mid-release (one bumped, the other not), and publishing
+          # then would ship a release whose contents claim another version.
+          MANIFEST="$(grep -m1 '^version = ' src/backend/pyproject.toml | cut -d'"' -f2)"
+          if [[ "$VERSION" != "$MANIFEST" ]]; then
+            echo "CHANGELOG.md documents $VERSION but src/backend/pyproject.toml is $MANIFEST."
+            echo "Skipping: the tree looks mid-release."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # An already-published version is not skipped here: the script is
+          # idempotent, and letting it run is what re-syncs the published notes
+          # when the changelog entry for a shipped version is corrected. It
+          # leaves the tag alone either way.
+          echo "Ensuring release v$VERSION is published and its notes current."
+          echo "version=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git identity
+        # An annotated tag needs a tagger; runners have no git identity by default.
+        if: steps.decide.outputs.publish == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Publish
+        # Values go through the environment rather than ${{ }} interpolation so
+        # that their contents can never be parsed as shell.
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.decide.outputs.version }}
+          COMMITISH: ${{ inputs.commitish }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: ./scripts/publish-release.sh "$VERSION" "$COMMITISH"

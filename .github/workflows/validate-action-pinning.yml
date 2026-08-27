@@ -21,12 +21,13 @@ on:
       - dev
     paths:
       - '.github/workflows/**'
+  # No paths filter on pull_request, deliberately — see the note in test.yml.
+  # This is a required status check on main, and a required check that never
+  # runs blocks the merge rather than passing it. The job is a few seconds.
   pull_request:
     branches:
       - main
       - dev
-    paths:
-      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:

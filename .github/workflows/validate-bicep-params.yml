@@ -26,6 +26,49 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
 
+      - name: Report backend authentication posture
+        # Advisory only — this never fails the build, because an empty
+        # backendAuthClientId is the documented default and failing on it would
+        # block every run. Its job is to keep audit finding C1 visible while
+        # deployment shape is already under review, rather than adding another
+        # red/green check row that gets skimmed past.
+        run: |
+          set -uo pipefail
+          {
+            echo "## Backend authentication posture"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for f in infra/main.bicep infra/bicep/main.bicep infra/avm/main.bicep; do
+            [ -f "$f" ] || continue
+
+            if grep -qE "^param backendAuthClientId string = ''" "$f"; then
+              auth="off by default"
+            elif grep -qE "^param backendAuthClientId string" "$f"; then
+              auth="a non-empty default is set"
+            else
+              auth="no backendAuthClientId parameter"
+            fi
+
+            if grep -qE "^[[:space:]]*ingressExternal: true" "$f"; then
+              reach="publicly reachable ingress present"
+            else
+              reach="no public ingress"
+            fi
+
+            echo "- \`$f\` — auth: **$auth**; $reach." >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          {
+            echo ""
+            echo "With auth off, the API takes the caller's identity from a"
+            echo "request header it cannot verify, so every ownership check in"
+            echo "the application rests on it. Enabling it needs an Entra app"
+            echo "registration and has consequences for the image proxy and the"
+            echo "WebSocket — see \`docs/backend_api_authentication.md\`"
+            echo "(audit finding C1)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
