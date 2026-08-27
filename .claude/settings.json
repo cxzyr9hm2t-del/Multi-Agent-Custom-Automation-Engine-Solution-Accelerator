@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Gmail__list_drafts",
+      "mcp__Gmail__create_draft",
+      "mcp__Gmail__update_draft",
+      "mcp__Gmail__trash_message",
+      "mcp__Gmail__untrash_message",
+      "mcp__Gmail__get_thread",
+      "mcp__Gmail__search_threads",
+      "mcp__Gmail__get_message",
+      "mcp__Gmail__list_labels",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__list_drafts",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__create_draft",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__update_draft",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__trash_message",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__untrash_message",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__get_thread",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__search_threads",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__get_message",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__list_labels"
+    ],
+    "deny": [
+      "mcp__Gmail__send_message",
+      "mcp__Gmail__reply",
+      "mcp__Gmail__forward",
+      "mcp__Gmail__trash_thread",
+      "mcp__Gmail__mark_message_spam",
+      "mcp__Gmail__mark_thread_spam",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__send_message",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__reply",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__forward",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__trash_thread",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__mark_message_spam",
+      "mcp__9ae7f95a-7f68-42c0-99da-9eec962d93cf__mark_thread_spam"
+    ]
+  }
+}

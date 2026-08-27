@@ -7,17 +7,23 @@ and TeamConfig — the three singletons imported together by the router.
 """
 
 import asyncio
+import time
 import json
 import logging
 from typing import Any, Dict, Optional
 
 from common.config.app_config import config
+from orchestration import state_store
 from common.models.messages import TeamConfiguration
 from fastapi import WebSocket
 from models.messages import WebsocketMessageType
 from models.plan_models import MPlan
 
 logger = logging.getLogger(__name__)
+
+# How often a waiter re-reads the durable store while waiting. Only used when
+# ORCHESTRATION_STATE_STORE is enabled; the local event still wins instantly.
+STORE_POLL_INTERVAL_SECONDS = 2.0
 
 
 class OrchestrationConfig:
@@ -33,13 +39,30 @@ class OrchestrationConfig:
     approvals and WebSocket delivery. Lifting the constraint means moving
     approval and clarification state to Cosmos or Redis and putting a backplane
     behind the socket registry.
+
+    WHICH CONTAINER HOLDS THE SOCKETS. Not this class. The live registry is
+    ``WebSocketConnectionManager.connections`` / ``.user_to_process`` below,
+    which does have a removal path (``remove_connection``). A ``self.sockets``
+    dict was declared here and never read or written anywhere in ``src/backend``
+    — it was removed rather than left to mislead, because the surrounding
+    documentation had come to cite it as one of the three things pinning the
+    replicas. The constraint is real; that field was not the reason for it.
+
+    UNBOUNDED CONTAINERS — measured, not assumed. ``orchestrations`` (written at
+    orchestration_manager.py:308 and :340), ``plans`` (plan_service.py:147,
+    orchestration_manager.py:803 and :880) and ``_teams`` have NO delete, pop or
+    clear anywhere in ``src/backend``. Every entry is keyed by ``user_id`` or
+    ``plan_id`` and survives for the life of the process, which at a single
+    pinned replica means until restart. ``active_tasks`` is the counter-example
+    and is cleaned up correctly (router.py:550 and :563). Adding eviction needs
+    a lifecycle decision — when is a plan finished, and may its orchestration be
+    dropped — so it is recorded here rather than guessed at.
     """
 
     def __init__(self):
         self.orchestrations: Dict[str, Any] = {}       # user_id -> workflow instance
         self.plans: Dict[str, MPlan] = {}              # plan_id -> plan details
         self.approvals: Dict[str, bool] = {}           # plan_id -> approval status (None = pending)
-        self.sockets: Dict[str, WebSocket] = {}        # user_id -> WebSocket
         self.clarifications: Dict[str, str] = {}       # plan_id -> clarification response
         self.max_rounds: int = 30
         self.active_tasks: Dict[str, asyncio.Task] = {}  # user_id -> running asyncio.Task
@@ -55,6 +78,76 @@ class OrchestrationConfig:
         # release their agent workflow.
         self._approval_owners: Dict[str, str] = {}
         self._clarification_owners: Dict[str, str] = {}
+
+        # Deadlines for clarifications answered by polling rather than by an
+        # awaited event. Nothing is awaiting them, so nothing would otherwise
+        # expire them. Monotonic clock — see set_clarification_pending.
+        self._clarification_deadlines: Dict[str, float] = {}
+
+    # ------------------------------------------------------------------ #
+    # Waiting for a decision
+    # ------------------------------------------------------------------ #
+
+    async def _await_decision(self, event: asyncio.Event, timeout: float, poll) -> None:
+        """Wait for a decision, from this process or from another replica.
+
+        The ``asyncio.Event`` only fires in the process that recorded the
+        answer. When the durable store is enabled an answer may instead be
+        recorded by a different replica, which this process learns about only by
+        asking. So the event is raced against a periodic read of the store.
+
+        With the store off — the default — this waits on the event alone and
+        behaves exactly as it did before.
+
+        Raises:
+            asyncio.TimeoutError: if no decision arrives within ``timeout``.
+        """
+        if not state_store.is_enabled():
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            return
+
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+
+            try:
+                # Wake on whichever comes first: the local event, or the next
+                # poll of the store.
+                await asyncio.wait_for(
+                    event.wait(), timeout=min(STORE_POLL_INTERVAL_SECONDS, remaining)
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+
+            if await poll():
+                return
+
+    async def _approval_from_store(self, plan_id: str) -> bool:
+        """Adopt an approval recorded elsewhere. True when one was found."""
+        owner = self._approval_owners.get(plan_id, "")
+        record = await state_store.state_store.read(
+            state_store.KIND_APPROVAL, plan_id, owner
+        )
+        if record is None or record.status != "completed" or record.approved is None:
+            return False
+
+        self.approvals[plan_id] = record.approved
+        return True
+
+    async def _clarification_from_store(self, request_id: str) -> bool:
+        """Adopt an answer recorded elsewhere. True when one was found."""
+        owner = self._clarification_owners.get(request_id, "")
+        record = await state_store.state_store.read(
+            state_store.KIND_CLARIFICATION, request_id, owner
+        )
+        if record is None or record.status != "completed" or record.answer is None:
+            return False
+
+        self.clarifications[request_id] = record.answer
+        return True
 
     def get_current_orchestration(self, user_id: str) -> Any:
         """Get existing orchestration workflow instance for user_id."""
@@ -106,7 +199,11 @@ class OrchestrationConfig:
             self._approval_events[plan_id] = asyncio.Event()
 
         try:
-            await asyncio.wait_for(self._approval_events[plan_id].wait(), timeout=timeout)
+            await self._await_decision(
+                self._approval_events[plan_id],
+                timeout=timeout,
+                poll=lambda: self._approval_from_store(plan_id),
+            )
             logger.info("Approval received: %s", plan_id)
             return self.approvals[plan_id]
         except asyncio.TimeoutError:
@@ -134,9 +231,22 @@ class OrchestrationConfig:
     # ------------------------------------------------------------------ #
 
     def set_clarification_pending(
-        self, request_id: str, user_id: Optional[str] = None
+        self,
+        request_id: str,
+        user_id: Optional[str] = None,
+        ttl_seconds: Optional[float] = None,
     ) -> None:
-        """Mark clarification pending, record its owner, and create/reset its event."""
+        """Mark clarification pending, record its owner, and create/reset its event.
+
+        Args:
+            request_id: The clarification's id.
+            user_id: The user being asked — only they may answer it.
+            ttl_seconds: How long the request stays answerable. Required by the
+                polled path: with nobody awaiting the event there is no
+                ``asyncio.wait_for`` to expire the entry, so the deadline is
+                recorded here and enforced by ``poll_clarification``. Defaults
+                to ``default_timeout``.
+        """
         self.clarifications[request_id] = None
         if user_id:
             self._clarification_owners[request_id] = user_id
@@ -144,6 +254,46 @@ class OrchestrationConfig:
             self._clarification_events[request_id] = asyncio.Event()
         else:
             self._clarification_events[request_id].clear()
+
+        ttl = self.default_timeout if ttl_seconds is None else ttl_seconds
+        # Monotonic: a wall-clock jump must not expire a live request early or
+        # keep a dead one answerable.
+        self._clarification_deadlines[request_id] = time.monotonic() + ttl
+
+    def poll_clarification(self, request_id: str) -> tuple[str, Optional[str]]:
+        """Return ``(status, answer)`` for a clarification without blocking.
+
+        This is the non-blocking counterpart to ``wait_for_clarification``. The
+        blocking form is still correct for the in-process tool path, where the
+        awaiting coroutine and the answer live in the same process. It is wrong
+        for the MCP bridge, where awaiting it held an HTTP request open across
+        the backend's public ingress for up to five minutes — long enough for
+        any idle timeout in the path to discard a clarification the user was
+        about to answer.
+
+        Status is one of:
+            ``input_required`` — asked, not yet answered
+            ``completed``      — answered; ``answer`` is set
+            ``expired``        — passed its deadline; tracking has been dropped
+            ``unknown``        — never registered, or already cleaned up
+
+        An answered clarification is deliberately **not** cleaned up on read, so
+        a poll whose response is lost in transit can be retried. It is dropped
+        when its deadline passes.
+        """
+        if request_id not in self.clarifications:
+            return ("unknown", None)
+
+        answer = self.clarifications[request_id]
+        if answer is not None:
+            return ("completed", answer)
+
+        deadline = self._clarification_deadlines.get(request_id)
+        if deadline is not None and time.monotonic() >= deadline:
+            self.cleanup_clarification(request_id)
+            return ("expired", None)
+
+        return ("input_required", None)
 
     def clarification_owner(self, request_id: str) -> Optional[str]:
         """Return the user a pending clarification belongs to, or None if unrecorded."""
@@ -170,7 +320,11 @@ class OrchestrationConfig:
             self._clarification_events[request_id] = asyncio.Event()
 
         try:
-            await asyncio.wait_for(self._clarification_events[request_id].wait(), timeout=timeout)
+            await self._await_decision(
+                self._clarification_events[request_id],
+                timeout=timeout,
+                poll=lambda: self._clarification_from_store(request_id),
+            )
             return self.clarifications[request_id]
         except asyncio.TimeoutError:
             self.cleanup_clarification(request_id)
@@ -190,6 +344,7 @@ class OrchestrationConfig:
         self.clarifications.pop(request_id, None)
         self._clarification_events.pop(request_id, None)
         self._clarification_owners.pop(request_id, None)
+        self._clarification_deadlines.pop(request_id, None)
 
 
 class ConnectionConfig:

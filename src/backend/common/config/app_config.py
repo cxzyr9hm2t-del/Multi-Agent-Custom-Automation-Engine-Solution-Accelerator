@@ -44,6 +44,18 @@ class AppConfig:
         # backend runs at a single replica. See common/utils/resource_tokens.py.
         self.API_TOKEN_SIGNING_KEY = self._get_optional("API_TOKEN_SIGNING_KEY")
 
+        # Where pending approvals and clarifications are kept.
+        #   "memory" (default) — process memory only, as it has always been
+        #   "cosmos"           — additionally written to and read from Cosmos,
+        #                        so an answer recorded by one replica is visible
+        #                        to another. See orchestration/state_store.py.
+        # This does NOT by itself make the backend safe at more than one
+        # replica: the orchestration object and the socket registry are still
+        # per-process. The maxReplicas pin stays.
+        self.ORCHESTRATION_STATE_STORE = self._get_optional(
+            "ORCHESTRATION_STATE_STORE", "memory"
+        )
+
         self.AZURE_COGNITIVE_SERVICES = self._get_optional(
             "AZURE_COGNITIVE_SERVICES", "https://cognitiveservices.azure.com/.default"
         )

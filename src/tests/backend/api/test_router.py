@@ -130,6 +130,13 @@ def rt(monkeypatch):
 
     orchestration_config = MagicMock()
     orchestration_config.wait_for_clarification = AsyncMock(return_value="the answer")
+    # Real attributes, not bare Mocks: default_timeout is serialised into the
+    # ask response and compared numerically, and poll_clarification's return is
+    # unpacked as a tuple.
+    orchestration_config.default_timeout = 300.0
+    orchestration_config.poll_clarification = MagicMock(
+        return_value=("input_required", None)
+    )
     orchestration_config.approvals = {}
     orchestration_config.clarifications = {}
     orchestration_config.plans = {}
@@ -386,14 +393,24 @@ class TestClarificationAsk:
             resource_tokens.PURPOSE_CLARIFY, "", user_id, 60
         )
 
-    def test_success(self, rt):
-        rt.orchestration_config.wait_for_clarification.return_value = "answer!"
+    def test_ask_returns_immediately_without_waiting(self, rt):
+        """The ask no longer blocks on a human.
+
+        It used to await wait_for_clarification, holding an HTTP request open
+        across the public ingress for up to five minutes. Any idle timeout in
+        that path discarded a clarification the user was mid-answer on.
+        """
         resp = rt.client.post(
             "/api/v4/clarification/ask",
             json={"question": "why?", "session_token": self._token()},
         )
         assert resp.status_code == 200
-        assert resp.json()["answer"] == "answer!"
+        body = resp.json()
+        assert body["status"] == "input_required"
+        assert body["request_id"]
+        assert body["poll_interval_seconds"] > 0
+        assert body["expires_in_seconds"] > 0
+        rt.orchestration_config.wait_for_clarification.assert_not_called()
 
     def test_the_user_comes_from_the_token_not_the_body(self, rt):
         """The delivery target is derived from the signature, not the payload.
@@ -443,29 +460,108 @@ class TestClarificationAsk:
         )
         assert resp.status_code == 401
 
-    def test_timeout(self, rt):
-        import asyncio
-
-        rt.orchestration_config.wait_for_clarification = AsyncMock(
-            side_effect=asyncio.TimeoutError()
-        )
-        resp = rt.client.post(
+    def test_the_request_is_registered_with_a_deadline(self, rt):
+        """Nothing awaits the event now, so nothing else would expire it."""
+        rt.client.post(
             "/api/v4/clarification/ask",
-            json={"question": "why?", "session_token": self._token()},
+            json={"question": "why?", "session_token": self._token("owner")},
+        )
+        kwargs = rt.orchestration_config.set_clarification_pending.call_args.kwargs
+        assert kwargs["user_id"] == "owner"
+        assert kwargs["ttl_seconds"] > 0
+
+
+class TestClarificationResult:
+    """Polling half of the bridge."""
+
+    def _token(self, user_id="user-1"):
+        resource_tokens = router_mod.resource_tokens
+        return resource_tokens.mint(
+            resource_tokens.PURPOSE_CLARIFY, "", user_id, 60
+        )
+
+    def test_pending_reports_input_required(self, rt):
+        rt.orchestration_config.poll_clarification.return_value = ("input_required", None)
+        rt.orchestration_config.clarification_owner.return_value = "user-1"
+        resp = rt.client.post(
+            "/api/v4/clarification/result",
+            json={"request_id": "r-1", "session_token": self._token()},
         )
         assert resp.status_code == 200
-        assert resp.json()["answer"] == ""
+        assert resp.json()["status"] == "input_required"
 
-    def test_generic_error(self, rt):
-        rt.orchestration_config.wait_for_clarification = AsyncMock(
-            side_effect=Exception("boom")
-        )
+    def test_completed_returns_the_answer(self, rt):
+        rt.orchestration_config.poll_clarification.return_value = ("completed", "42")
+        rt.orchestration_config.clarification_owner.return_value = "user-1"
         resp = rt.client.post(
-            "/api/v4/clarification/ask",
-            json={"question": "why?", "session_token": self._token()},
+            "/api/v4/clarification/result",
+            json={"request_id": "r-1", "session_token": self._token()},
         )
         assert resp.status_code == 200
-        assert resp.json()["answer"] == ""
+        assert resp.json() == {"status": "completed", "answer": "42"}
+
+    def test_another_users_answer_is_refused(self, rt):
+        """A valid token is not permission to read someone else's answer."""
+        rt.orchestration_config.poll_clarification.return_value = ("completed", "secret")
+        rt.orchestration_config.clarification_owner.return_value = "someone-else"
+        resp = rt.client.post(
+            "/api/v4/clarification/result",
+            json={"request_id": "r-1", "session_token": self._token("user-1")},
+        )
+        assert resp.status_code == 403
+        assert "secret" not in resp.text
+
+    def test_an_unrecorded_owner_is_refused(self, rt):
+        """Fail closed, as the approval gate does."""
+        rt.orchestration_config.poll_clarification.return_value = ("completed", "secret")
+        rt.orchestration_config.clarification_owner.return_value = None
+        resp = rt.client.post(
+            "/api/v4/clarification/result",
+            json={"request_id": "r-1", "session_token": self._token()},
+        )
+        assert resp.status_code == 403
+
+    def test_unknown_needs_no_owner_and_leaks_nothing(self, rt):
+        rt.orchestration_config.poll_clarification.return_value = ("unknown", None)
+        resp = rt.client.post(
+            "/api/v4/clarification/result",
+            json={"request_id": "r-1", "session_token": self._token()},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "unknown"
+
+    def test_expired_is_reported(self, rt):
+        rt.orchestration_config.poll_clarification.return_value = ("expired", None)
+        rt.orchestration_config.clarification_owner.return_value = "user-1"
+        resp = rt.client.post(
+            "/api/v4/clarification/result",
+            json={"request_id": "r-1", "session_token": self._token()},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "expired"
+
+    def test_no_token_is_refused(self, rt):
+        resp = rt.client.post(
+            "/api/v4/clarification/result",
+            json={"request_id": "r-1"},
+        )
+        assert resp.status_code == 401
+
+    def test_a_token_for_another_purpose_is_refused(self, rt):
+        resource_tokens = router_mod.resource_tokens
+        token = resource_tokens.mint(resource_tokens.PURPOSE_IMAGE, "", "user-1", 60)
+        resp = rt.client.post(
+            "/api/v4/clarification/result",
+            json={"request_id": "r-1", "session_token": token},
+        )
+        assert resp.status_code == 401
+
+    def test_missing_request_id(self, rt):
+        resp = rt.client.post(
+            "/api/v4/clarification/result",
+            json={"session_token": self._token()},
+        )
+        assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------

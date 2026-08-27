@@ -52,6 +52,183 @@ orchestration_config = _cc.orchestration_config
 team_config = _cc.team_config
 
 
+class TestAwaitDecisionAcrossReplicas:
+    """The reason Track C1 exists.
+
+    An asyncio.Event only fires in the process that set it. With the durable
+    store on, the answer may be recorded by a different replica, and the waiter
+    learns of it only by asking. With the store off, behaviour is unchanged.
+    """
+
+    @pytest.mark.asyncio
+    async def test_with_the_store_off_it_waits_on_the_event_alone(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+
+        polled = []
+
+        async def _never():
+            polled.append(1)
+            return False
+
+        with patch.object(_cc.state_store, "is_enabled", return_value=False):
+            event = cfg._approval_events["p1"]
+            event.set()
+            await cfg._await_decision(event, timeout=1, poll=_never)
+
+        # Not consulted at all — no Cosmos traffic in the default configuration.
+        assert polled == []
+
+    @pytest.mark.asyncio
+    async def test_the_local_event_still_wins_immediately(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+
+        async def _never():
+            return False
+
+        with patch.object(_cc.state_store, "is_enabled", return_value=True):
+            event = cfg._approval_events["p1"]
+            event.set()
+            await cfg._await_decision(event, timeout=1, poll=_never)
+
+    @pytest.mark.asyncio
+    async def test_an_answer_from_another_replica_is_adopted(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+
+        async def _found_on_second_look():
+            return True
+
+        with patch.object(_cc.state_store, "is_enabled", return_value=True), \
+                patch.object(_cc, "STORE_POLL_INTERVAL_SECONDS", 0.01):
+            # The event is never set — as it would not be, on this replica.
+            await cfg._await_decision(
+                cfg._approval_events["p1"], timeout=1, poll=_found_on_second_look
+            )
+
+    @pytest.mark.asyncio
+    async def test_it_still_times_out_when_no_answer_ever_arrives(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+
+        async def _never():
+            return False
+
+        with patch.object(_cc.state_store, "is_enabled", return_value=True), \
+                patch.object(_cc, "STORE_POLL_INTERVAL_SECONDS", 0.01):
+            with pytest.raises(asyncio.TimeoutError):
+                await cfg._await_decision(
+                    cfg._approval_events["p1"], timeout=0.05, poll=_never
+                )
+
+    @pytest.mark.asyncio
+    async def test_a_stored_approval_is_copied_into_memory(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+        record = MagicMock(status="completed", approved=True)
+
+        with patch.object(
+            _cc.state_store.state_store, "read", AsyncMock(return_value=record)
+        ):
+            assert await cfg._approval_from_store("p1") is True
+        assert cfg.approvals["p1"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_still_pending_stored_record_is_not_adopted(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="u1")
+        record = MagicMock(status="input_required", approved=None)
+
+        with patch.object(
+            _cc.state_store.state_store, "read", AsyncMock(return_value=record)
+        ):
+            assert await cfg._approval_from_store("p1") is False
+        assert cfg.approvals["p1"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_stored_clarification_is_copied_into_memory(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        record = MagicMock(status="completed", answer="Tuesday")
+
+        with patch.object(
+            _cc.state_store.state_store, "read", AsyncMock(return_value=record)
+        ):
+            assert await cfg._clarification_from_store("r1") is True
+        assert cfg.clarifications["r1"] == "Tuesday"
+
+    @pytest.mark.asyncio
+    async def test_the_owner_is_passed_through_so_the_read_is_scoped(self):
+        cfg = OrchestrationConfig()
+        cfg.set_approval_pending("p1", user_id="owner-1")
+        read = AsyncMock(return_value=None)
+
+        with patch.object(_cc.state_store.state_store, "read", read):
+            await cfg._approval_from_store("p1")
+        assert read.call_args.args[2] == "owner-1"
+
+
+class TestPollClarification:
+    """The non-blocking counterpart to wait_for_clarification.
+
+    The MCP bridge polls instead of awaiting, so nothing holds an HTTP request
+    open across the public ingress while a human types. That removes the
+    awaited timeout too, which is why expiry has to be enforced here.
+    """
+
+    def test_unregistered_request_is_unknown(self):
+        cfg = OrchestrationConfig()
+        assert cfg.poll_clarification("nope") == ("unknown", None)
+
+    def test_pending_request_is_input_required(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        assert cfg.poll_clarification("r1") == ("input_required", None)
+
+    def test_answered_request_is_completed(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        cfg.set_clarification_result("r1", "42")
+        assert cfg.poll_clarification("r1") == ("completed", "42")
+
+    def test_an_answer_survives_being_read_twice(self):
+        """A poll whose response is lost in transit must be retryable."""
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        cfg.set_clarification_result("r1", "42")
+        assert cfg.poll_clarification("r1") == ("completed", "42")
+        assert cfg.poll_clarification("r1") == ("completed", "42")
+
+    def test_past_its_deadline_it_expires_and_is_dropped(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1", ttl_seconds=0)
+        assert cfg.poll_clarification("r1") == ("expired", None)
+        # Dropped, not merely reported — otherwise the dicts grow without bound
+        # now that no awaited timeout cleans them up.
+        assert cfg.poll_clarification("r1") == ("unknown", None)
+        assert cfg.clarification_owner("r1") is None
+        assert "r1" not in cfg._clarification_deadlines
+
+    def test_an_answer_arriving_late_still_wins_over_expiry(self):
+        """Answered is checked before the deadline: the user did reply."""
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1", ttl_seconds=0)
+        cfg.set_clarification_result("r1", "42")
+        assert cfg.poll_clarification("r1") == ("completed", "42")
+
+    def test_ttl_defaults_to_the_configured_timeout(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        assert cfg.poll_clarification("r1")[0] == "input_required"
+
+    def test_cleanup_drops_the_deadline_too(self):
+        cfg = OrchestrationConfig()
+        cfg.set_clarification_pending("r1", user_id="u1")
+        cfg.cleanup_clarification("r1")
+        assert "r1" not in cfg._clarification_deadlines
+
+
 # ----------------------------------------------------------------------- #
 # OrchestrationConfig
 # ----------------------------------------------------------------------- #

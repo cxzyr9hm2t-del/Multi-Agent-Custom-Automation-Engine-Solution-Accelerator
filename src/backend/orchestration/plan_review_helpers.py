@@ -21,6 +21,7 @@ from agent_framework_orchestrations._magentic import (
     ORCHESTRATOR_TASK_LEDGER_PLAN_PROMPT,
     ORCHESTRATOR_TASK_LEDGER_PLAN_UPDATE_PROMPT)
 from models.plan_models import MPlan, MStep
+from orchestration import state_store
 from orchestration.connection_config import (connection_config,
                                              orchestration_config)
 from orchestration.helper.plan_to_mplan_converter import PlanToMPlanConverter
@@ -464,6 +465,12 @@ async def wait_for_plan_approval(
         return messages.PlanApprovalResponse(approved=False, m_plan_id=m_plan_id)
 
     orchestration_config.set_approval_pending(m_plan_id, user_id=user_id)
+    await state_store.state_store.record_pending(
+        state_store.KIND_APPROVAL,
+        m_plan_id,
+        user_id,
+        orchestration_config.default_timeout,
+    )
 
     try:
         approved = await orchestration_config.wait_for_approval(m_plan_id)
