@@ -21,6 +21,17 @@
 # the pull_request trigger when this was written. Before adding a check here,
 # confirm it has no paths filter on pull_request, or a docs-only pull request
 # will never be mergeable again.
+#
+# The same hazard has a second cause that no amount of workflow review catches:
+# Actions itself being unable to run them. On 2026-08-26, from roughly 15:03
+# UTC, every run in this repository either reported startup_failure or sat
+# queued for fifteen minutes and was then cancelled for want of a runner — the
+# same three gate checks passing locally on the very tree CI was marking red.
+# Turning protection on in that window would have required checks that could
+# not run, wedging the repository closed with the fix for it on the wrong side
+# of the gate. So this script now looks before it leaps: it refuses to apply
+# while the required checks are not currently green on the target branch.
+# --force overrides, for the case where you know better than the preflight.
 
 set -euo pipefail
 
@@ -47,12 +58,15 @@ ENFORCE_ADMINS="${ENFORCE_ADMINS:-true}"
 STRICT="${STRICT:-false}"
 
 MODE="apply"
-case "${1:-}" in
-    --dry-run) MODE="dry-run" ;;
-    --show)    MODE="show" ;;
-    "")        ;;
-    *) echo "usage: $0 [--dry-run|--show]" >&2; exit 64 ;;
-esac
+FORCE=false
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) MODE="dry-run" ;;
+        --show)    MODE="show" ;;
+        --force)   FORCE=true ;;
+        *) echo "usage: $0 [--dry-run|--show] [--force]" >&2; exit 64 ;;
+    esac
+done
 
 command -v gh >/dev/null || {
     echo "error: the GitHub CLI (gh) is required. See https://cli.github.com" >&2
@@ -80,6 +94,62 @@ PY
     return 0
 }
 
+# Report the current state of each required check on the branch tip, and return
+# non-zero unless every one of them is a completed success. This is the same
+# signal branch protection will evaluate, read from the same place, so a green
+# preflight means the rule it is about to install is satisfiable right now.
+#
+# A check whose name is absent is the dangerous case, not the harmless one: it
+# is what GitHub shows as "Expected" forever, so it is reported as MISSING and
+# fails the preflight just as a red one does.
+preflight_checks() {
+    if ! gh api "repos/$REPO/commits/$BRANCH/check-runs" --paginate >/tmp/bpcr.$$ 2>/dev/null; then
+        echo "  could not read check runs for '$BRANCH' — cannot verify the gates are running"
+        rm -f /tmp/bpcr.$$
+        return 1
+    fi
+    python3 - /tmp/bpcr.$$ "${CHECKS[@]}" <<'PY'
+import json, sys
+
+data = json.load(open(sys.argv[1]))
+required = sys.argv[2:]
+
+# --paginate concatenates pages; take every check_runs array present.
+runs = data.get("check_runs", []) if isinstance(data, dict) else []
+latest = {}
+for r in runs:
+    name = r.get("name")
+    if name in required:
+        prev = latest.get(name)
+        # started_at ascending; keep the most recent attempt per name.
+        if prev is None or (r.get("started_at") or "") >= (prev.get("started_at") or ""):
+            latest[name] = r
+
+ok = True
+for name in required:
+    r = latest.get(name)
+    if r is None:
+        print(f"  {name:<28} MISSING — never ran on this commit")
+        ok = False
+        continue
+    status = r.get("status")
+    concl = r.get("conclusion")
+    if status != "completed":
+        print(f"  {name:<28} {status.upper()} — still not finished")
+        ok = False
+    elif concl != "success":
+        print(f"  {name:<28} {str(concl).upper()}")
+        ok = False
+    else:
+        print(f"  {name:<28} success")
+
+sys.exit(0 if ok else 1)
+PY
+    local rc=$?
+    rm -f /tmp/bpcr.$$
+    return $rc
+}
+
 echo "Repository : $REPO"
 echo "Branch     : $BRANCH"
 echo
@@ -99,9 +169,46 @@ echo "  strict (up to date) : $STRICT"
 echo "  enforced on admins  : $ENFORCE_ADMINS"
 echo
 
+echo "Required checks on the tip of '$BRANCH' right now:"
+if preflight_checks; then
+    PREFLIGHT_OK=true
+else
+    PREFLIGHT_OK=false
+fi
+echo
+
 if [[ "$MODE" == "dry-run" ]]; then
-    echo "Dry run: nothing was changed."
+    if [[ "$PREFLIGHT_OK" == true ]]; then
+        echo "Dry run: nothing was changed. The checks are green, so applying would be safe."
+    else
+        echo "Dry run: nothing was changed. Applying now would wedge '$BRANCH' — see above."
+    fi
     exit 0
+fi
+
+if [[ "$PREFLIGHT_OK" != true ]]; then
+    if [[ "$FORCE" == true ]]; then
+        echo "Preflight failed, but --force was given. Applying anyway."
+        echo "If these checks do not start passing, nothing will merge into"
+        echo "'$BRANCH' until you run: gh api -X DELETE $API"
+        echo
+    else
+        cat >&2 <<EOF
+Refusing to apply: the checks this rule would require are not passing on
+'$BRANCH' right now.
+
+Branch protection does not wait for a check to become available — a required
+check that has not succeeded blocks every merge, so turning it on in this
+state closes the repository, with the fix for it stuck behind the same gate.
+
+If the checks are red, fix them first. If they are MISSING or stuck queued,
+this is usually Actions being unable to schedule runners rather than anything
+wrong with the code; re-run this once runs are completing normally again.
+
+To override deliberately:  $0 --force
+EOF
+        exit 1
+    fi
 fi
 
 # Build the payload with python rather than string-concatenating JSON, so a
